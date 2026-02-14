@@ -309,6 +309,57 @@ func TestCommandsBlocker(t *testing.T) {
 	}
 }
 
+func TestCommandsBlockerWithUnban(t *testing.T) {
+	defaultBanned := []string{"curl", "wget", "ssh", "scp", "sudo"}
+
+	tests := []struct {
+		name        string
+		banned      []string
+		input       []string
+		shouldBlock bool
+	}{
+		{
+			name:        "ssh blocked with full list",
+			banned:      defaultBanned,
+			input:       []string{"ssh", "user@host"},
+			shouldBlock: true,
+		},
+		{
+			name:        "ssh allowed after removal",
+			banned:      []string{"curl", "wget", "scp", "sudo"},
+			input:       []string{"ssh", "user@host"},
+			shouldBlock: false,
+		},
+		{
+			name:        "curl allowed after removal",
+			banned:      []string{"wget", "ssh", "scp", "sudo"},
+			input:       []string{"curl", "https://example.com"},
+			shouldBlock: false,
+		},
+		{
+			name:        "sudo still blocked after unban of ssh",
+			banned:      []string{"curl", "wget", "scp", "sudo"},
+			input:       []string{"sudo", "rm", "-rf"},
+			shouldBlock: true,
+		},
+		{
+			name:        "empty banned list allows everything",
+			banned:      []string{},
+			input:       []string{"curl", "https://example.com"},
+			shouldBlock: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blocker := CommandsBlocker(tt.banned)
+			result := blocker(tt.input)
+			require.Equal(t, tt.shouldBlock, result,
+				"Expected block=%v for input %v", tt.shouldBlock, tt.input)
+		})
+	}
+}
+
 func TestSplitArgsFlags(t *testing.T) {
 	tests := []struct {
 		name      string
