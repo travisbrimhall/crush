@@ -873,6 +873,10 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 		modelConfig.CostPer1MIn/1e6*float64(resp.TotalUsage.InputTokens) +
 		modelConfig.CostPer1MOut/1e6*float64(resp.TotalUsage.OutputTokens)
 
+	if a.isClaudeCode() {
+		cost = 0
+	}
+
 	// Use override cost if available (e.g., from OpenRouter).
 	if openrouterCost != nil {
 		cost = *openrouterCost
@@ -903,12 +907,22 @@ func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float6
 	return &opts.Usage.Cost
 }
 
+func (a *sessionAgent) isClaudeCode() bool {
+	model := a.largeModel.Get()
+	return model.ModelCfg.Provider == string(catwalk.InferenceProviderAnthropic) &&
+		a.systemPromptPrefix.Get() == "You are Claude Code, Anthropic's official CLI for Claude."
+}
+
 func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64) {
 	modelConfig := model.CatwalkCfg
 	cost := modelConfig.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
 		modelConfig.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
 		modelConfig.CostPer1MIn/1e6*float64(usage.InputTokens) +
 		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
+
+	if a.isClaudeCode() {
+		cost = 0
+	}
 
 	a.eventTokensUsed(session.ID, model, usage, cost)
 

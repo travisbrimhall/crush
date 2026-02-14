@@ -7,11 +7,14 @@ import (
 	"os"
 	"os/signal"
 
+	"strings"
+
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
 	hyperp "github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/oauth"
+	"github.com/charmbracelet/crush/internal/oauth/claude"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/oauth/hyper"
 	"github.com/pkg/browser"
@@ -24,16 +27,21 @@ var loginCmd = &cobra.Command{
 	Short:   "Login Crush to a platform",
 	Long: `Login Crush to a specified platform.
 The platform should be provided as an argument.
-Available platforms are: hyper, copilot.`,
+Available platforms are: hyper, claude, copilot.`,
 	Example: `
 # Authenticate with Charm Hyper
 crush login
+
+# Authenticate with Claude Code Max
+crush login claude
 
 # Authenticate with GitHub Copilot
 crush login copilot
   `,
 	ValidArgs: []cobra.Completion{
 		"hyper",
+		"claude",
+		"anthropic",
 		"copilot",
 		"github",
 		"github-copilot",
@@ -53,6 +61,8 @@ crush login copilot
 		switch provider {
 		case "hyper":
 			return loginHyper(app.Config())
+		case "anthropic", "claude":
+			return loginClaude(app.Config())
 		case "copilot", "github", "github-copilot":
 			return loginCopilot(app.Config())
 		default:
@@ -120,6 +130,57 @@ func loginHyper(cfg *config.Config) error {
 
 	fmt.Println()
 	fmt.Println("You're now authenticated with Hyper!")
+	return nil
+}
+
+func loginClaude(cfg *config.Config) error {
+	ctx := getLoginContext()
+
+	if cfg.HasConfigField("providers.anthropic.oauth") {
+		fmt.Println("You are already logged in to Claude.")
+		return nil
+	}
+
+	verifier, challenge, err := claude.GetChallenge()
+	if err != nil {
+		return err
+	}
+	url, err := claude.AuthorizeURL(verifier, challenge)
+	if err != nil {
+		return err
+	}
+	fmt.Println("Open the following URL and follow the instructions to authenticate with Claude Code Max:")
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Hyperlink(url, "id=claude").Render(url))
+	fmt.Println()
+	fmt.Println("Press enter to continue...")
+	waitEnter()
+
+	fmt.Println("Now paste the code from Anthropic and press enter...")
+	fmt.Println()
+	fmt.Print("> ")
+	var code string
+	for code == "" {
+		_, _ = fmt.Scanln(&code)
+		code = strings.TrimSpace(code)
+	}
+
+	fmt.Println()
+	fmt.Println("Exchanging authorization code...")
+	token, err := claude.ExchangeToken(ctx, code, verifier)
+	if err != nil {
+		return err
+	}
+
+	if err := cmp.Or(
+		cfg.SetConfigField("providers.anthropic.api_key", token.AccessToken),
+		cfg.SetConfigField("providers.anthropic.oauth", token),
+	); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("You're now authenticated with Claude Code Max!")
 	return nil
 }
 
