@@ -794,10 +794,6 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
 		case message.Assistant:
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
-			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-				items = append(items, infoItem)
-			}
 		default:
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
 		}
@@ -923,15 +919,6 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
-		if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-			infoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-			m.chat.AppendMessages(infoItem)
-			if m.chat.Follow() {
-				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-		}
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
 			toolItem := m.chat.MessageItem(tr.ToolCallID)
@@ -989,13 +976,6 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		m.chat.RemoveMessage(msg.ID)
 		if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem != nil {
 			m.chat.RemoveMessage(chat.AssistantInfoID(msg.ID))
-		}
-	}
-
-	if shouldRenderAssistant && msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-		if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem == nil {
-			newInfoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-			m.chat.AppendMessages(newInfoItem)
 		}
 	}
 
@@ -1202,6 +1182,14 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return nil
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionDeleteMessage:
+		cmds = append(cmds, func() tea.Msg {
+			err := m.com.App.Messages.Delete(context.Background(), msg.MessageID)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+			return nil
+		})
 	case dialog.ActionToggleHelp:
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -1989,17 +1977,6 @@ func (m *UI) ShortHelp() []key.Binding {
 	case uiInitialize:
 		binds = append(binds, k.Quit)
 	case uiChat:
-		// Show cancel binding if agent is busy.
-		if m.isAgentBusy() {
-			cancelBinding := k.Chat.Cancel
-			if m.isCanceling {
-				cancelBinding.SetHelp("esc", "press again to cancel")
-			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
-				cancelBinding.SetHelp("esc", "clear queue")
-			}
-			binds = append(binds, cancelBinding)
-		}
-
 		if m.focus == uiFocusEditor {
 			tab.SetHelp("tab", "focus chat")
 		} else {
@@ -2014,9 +1991,7 @@ func (m *UI) ShortHelp() []key.Binding {
 
 		switch m.focus {
 		case uiFocusEditor:
-			binds = append(binds,
-				k.Editor.Newline,
-			)
+			// No additional bindings for editor focus.
 		case uiFocusMain:
 			binds = append(binds,
 				k.Chat.UpDown,
@@ -2036,12 +2011,10 @@ func (m *UI) ShortHelp() []key.Binding {
 		binds = append(binds,
 			commands,
 			k.Models,
-			k.Editor.Newline,
 		)
 	}
 
 	binds = append(binds,
-		k.Quit,
 		k.Help,
 	)
 
@@ -2818,6 +2791,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openQuitDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.ContextID:
+		if cmd := m.openContextDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	default:
 		// Unknown dialog
 		break
@@ -2835,6 +2812,26 @@ func (m *UI) openQuitDialog() tea.Cmd {
 
 	quitDialog := dialog.NewQuit(m.com)
 	m.dialog.OpenDialog(quitDialog)
+	return nil
+}
+
+// openContextDialog opens the context viewer dialog.
+func (m *UI) openContextDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.ContextID) {
+		m.dialog.BringToFront(dialog.ContextID)
+		return nil
+	}
+
+	if m.session == nil {
+		return nil
+	}
+
+	contextDialog, err := dialog.NewContext(m.com, m.session.ID)
+	if err != nil {
+		return util.ReportError(err)
+	}
+
+	m.dialog.OpenDialog(contextDialog)
 	return nil
 }
 

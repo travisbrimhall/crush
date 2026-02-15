@@ -24,9 +24,8 @@ const (
 )
 
 type header struct {
-	// cached logo and compact logo
-	logo        string
-	compactLogo string
+	// cached logo
+	logo string
 
 	com     *common.Common
 	width   int
@@ -38,9 +37,6 @@ func newHeader(com *common.Common) *header {
 	h := &header{
 		com: com,
 	}
-	t := com.Styles
-	h.compactLogo = t.Header.Charm.Render("Charm™") + " " +
-		styles.ApplyBoldForegroundGrad(t, "CRUSH", t.Secondary, t.Primary) + " "
 	return h
 }
 
@@ -71,9 +67,8 @@ func (h *header) drawHeader(
 	}
 
 	var b strings.Builder
-	b.WriteString(h.compactLogo)
 
-	availDetailWidth := width - leftPadding - rightPadding - lipgloss.Width(b.String()) - minHeaderDiags
+	availDetailWidth := width - leftPadding - rightPadding - minHeaderDiags
 	details := renderHeaderDetails(
 		h.com,
 		session,
@@ -89,9 +84,29 @@ func (h *header) drawHeader(
 		rightPadding
 
 	if remainingWidth > 0 {
-		b.WriteString(t.Header.Diagonals.Render(
-			strings.Repeat(headerDiag, max(minHeaderDiags, remainingWidth)),
-		))
+		totalDiags := max(minHeaderDiags, remainingWidth)
+
+		// Calculate context usage percentage for visual progress bar.
+		agentCfg := h.com.Config().Agents[config.AgentCoder]
+		model := h.com.Config().GetModelByType(agentCfg.Model)
+		percentage := float64(session.CompletionTokens+session.PromptTokens) / float64(model.ContextWindow)
+
+		// Split diagonals into filled (used) and empty (remaining).
+		filledCount := int(float64(totalDiags) * percentage)
+		emptyCount := totalDiags - filledCount
+
+		// Choose fill style based on usage level.
+		fillStyle := t.Header.DiagonalsFilled
+		if percentage > 0.8 {
+			fillStyle = t.Header.DiagonalsWarning
+		}
+
+		if filledCount > 0 {
+			b.WriteString(fillStyle.Render(strings.Repeat(headerDiag, filledCount)))
+		}
+		if emptyCount > 0 {
+			b.WriteString(t.Header.Diagonals.Render(strings.Repeat(headerDiag, emptyCount)))
+		}
 		b.WriteString(" ")
 	}
 

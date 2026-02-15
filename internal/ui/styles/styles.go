@@ -73,13 +73,15 @@ type Styles struct {
 
 	// Header
 	Header struct {
-		Charm        lipgloss.Style // Style for "Charm™" label
-		Diagonals    lipgloss.Style // Style for diagonal separators (╱)
-		Percentage   lipgloss.Style // Style for context percentage
-		Keystroke    lipgloss.Style // Style for keystroke hints (e.g., "ctrl+d")
-		KeystrokeTip lipgloss.Style // Style for keystroke action text (e.g., "open", "close")
-		WorkingDir   lipgloss.Style // Style for current working directory
-		Separator    lipgloss.Style // Style for separator dots (•)
+		Charm            lipgloss.Style // Style for "Charm" label
+		Diagonals        lipgloss.Style // Style for diagonal separators (╱)
+		DiagonalsFilled  lipgloss.Style // Style for filled diagonal separators (context used)
+		DiagonalsWarning lipgloss.Style // Style for filled diagonals when context is high (>80%)
+		Percentage       lipgloss.Style // Style for context percentage
+		Keystroke        lipgloss.Style // Style for keystroke hints (e.g., "ctrl+d")
+		KeystrokeTip     lipgloss.Style // Style for keystroke action text (e.g., "open", "close")
+		WorkingDir       lipgloss.Style // Style for current working directory
+		Separator        lipgloss.Style // Style for separator dots (•)
 	}
 
 	CompactDetails struct {
@@ -656,28 +658,34 @@ func DefaultStyles() Styles {
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "## ",
+				Color:  stringPtr(charmtone.Malibu.Hex()),
+				Bold:   boolPtr(true),
 			},
 		},
 		H3: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "### ",
+				Color:  stringPtr(charmtone.Sardine.Hex()),
+				Bold:   boolPtr(true),
 			},
 		},
 		H4: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "#### ",
+				Color:  stringPtr(charmtone.Guac.Hex()),
+				Bold:   boolPtr(true),
 			},
 		},
 		H5: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "##### ",
+				Color:  stringPtr(charmtone.Bok.Hex()),
 			},
 		},
 		H6: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "###### ",
-				Color:  stringPtr(charmtone.Guac.Hex()),
-				Bold:   boolPtr(false),
+				Color:  stringPtr(charmtone.Oyster.Hex()),
 			},
 		},
 		Strikethrough: ansi.StylePrimitive{
@@ -1080,6 +1088,8 @@ func DefaultStyles() Styles {
 	// Compact header styles
 	s.Header.Charm = base.Foreground(secondary)
 	s.Header.Diagonals = base.Foreground(primary)
+	s.Header.DiagonalsFilled = base.Foreground(secondary)
+	s.Header.DiagonalsWarning = base.Foreground(yellow)
 	s.Header.Percentage = s.Muted
 	s.Header.Keystroke = s.Muted
 	s.Header.KeystrokeTip = s.Subtle
@@ -1230,12 +1240,14 @@ func DefaultStyles() Styles {
 
 	s.Chat.Message.NoContent = lipgloss.NewStyle().Foreground(fgBase)
 	s.Chat.Message.UserBlurred = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(primary).BorderStyle(normalBorder)
+		BorderForeground(primary).BorderStyle(normalBorder).
+		MarginBottom(1)
 	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(primary).BorderStyle(messageFocussedBorder)
-	s.Chat.Message.AssistantBlurred = s.Chat.Message.NoContent.PaddingLeft(2)
-	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(greenDark).BorderStyle(messageFocussedBorder)
+		BorderForeground(primary).BorderStyle(messageFocussedBorder).
+		MarginBottom(1)
+	s.Chat.Message.AssistantBlurred = s.Chat.Message.NoContent.PaddingLeft(4).MarginBottom(1)
+	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(4).BorderLeft(true).
+		BorderForeground(greenDark).BorderStyle(messageFocussedBorder).MarginBottom(1)
 	s.Chat.Message.Thinking = lipgloss.NewStyle().MaxHeight(10)
 	s.Chat.Message.ErrorTag = lipgloss.NewStyle().Padding(0, 1).
 		Background(red).Foreground(white)

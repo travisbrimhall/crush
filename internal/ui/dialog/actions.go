@@ -81,6 +81,14 @@ type (
 	}
 )
 
+// Messages for context viewer dialog.
+type (
+	// ActionDeleteMessage is a message to delete a message from context.
+	ActionDeleteMessage struct {
+		MessageID string
+	}
+)
+
 // Messages for API key input dialog.
 type (
 	ActionChangeAPIKeyState struct {
