@@ -52,6 +52,7 @@ func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) Messa
 		GradColorB:  sty.Secondary,
 		LabelColor:  sty.FgBase,
 		CycleColors: true,
+		Style:       anim.ParseStyle(sty.AnimationStyle),
 	})
 	return a
 }

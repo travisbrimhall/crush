@@ -34,6 +34,12 @@ func (c *Common) Config() *config.Config {
 // DefaultCommon returns the default common UI configurations.
 func DefaultCommon(app *app.App) *Common {
 	s := styles.DefaultStyles()
+
+	// Set animation style from config.
+	if cfg := app.Config(); cfg != nil && cfg.Options != nil && cfg.Options.TUI != nil {
+		s.AnimationStyle = string(cfg.Options.TUI.AnimationStyle)
+	}
+
 	return &Common{
 		App:    app,
 		Styles: &s,

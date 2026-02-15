@@ -195,6 +195,9 @@ type Styles struct {
 	RedDark       color.Color
 	Yellow        color.Color
 
+	// Animation style for loading spinners.
+	AnimationStyle string
+
 	// Section Title
 	Section struct {
 		Title lipgloss.Style

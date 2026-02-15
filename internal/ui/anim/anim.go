@@ -4,6 +4,7 @@ package anim
 import (
 	"fmt"
 	"image/color"
+	"math"
 	"math/rand/v2"
 	"strings"
 	"sync/atomic"
@@ -30,10 +31,6 @@ const (
 	// change every 8 frames (400 milliseconds).
 	ellipsisAnimSpeed = 8
 
-	// The maximum amount of time that can pass before a character appears.
-	// This is used to create a staggered entrance effect.
-	maxBirthOffset = time.Second
-
 	// Number of frames to prerender for the animation. After this number
 	// of frames, the animation will loop. This only applies when color
 	// cycling is disabled.
@@ -50,9 +47,37 @@ var (
 	defaultLabelColor = color.RGBA{R: 0xcc, G: 0xcc, B: 0xcc, A: 0xff}
 )
 
+// Style defines the animation style.
+type Style int
+
+const (
+	// StyleMatrix is the default scrambled character animation.
+	StyleMatrix Style = iota
+	// StylePulse uses fading block characters.
+	StylePulse
+	// StyleSineWave uses vertical bar characters in a wave pattern.
+	StyleSineWave
+)
+
+// ParseStyle converts a string to a Style. Returns StyleMatrix for unknown values.
+func ParseStyle(s string) Style {
+	switch s {
+	case "pulse":
+		return StylePulse
+	case "sinewave":
+		return StyleSineWave
+	default:
+		return StyleMatrix
+	}
+}
+
 var (
 	availableRunes = []rune("0123456789abcdefABCDEF~!@#$£€%^&*()+=_")
 	ellipsisFrames = []string{".", "..", "...", ""}
+	// Block characters for pulse animation (full to empty).
+	pulseChars = []rune{'█', '▓', '▒', '░', ' '}
+	// Vertical bar characters for sine wave animation (low to high).
+	sineWaveChars = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 )
 
 // Internal ID management. Used during animating to ensure that frame messages
@@ -75,11 +100,11 @@ type animCache struct {
 
 var animCacheMap = csync.NewMap[string, *animCache]()
 
-// settingsHash creates a hash key for the settings to use for caching
+// settingsHash creates a hash key for the settings to use for caching.
 func settingsHash(opts Settings) string {
 	h := xxh3.New()
-	fmt.Fprintf(h, "%d-%s-%v-%v-%v-%t",
-		opts.Size, opts.Label, opts.LabelColor, opts.GradColorA, opts.GradColorB, opts.CycleColors)
+	fmt.Fprintf(h, "%d-%s-%v-%v-%v-%t-%d",
+		opts.Size, opts.Label, opts.LabelColor, opts.GradColorA, opts.GradColorB, opts.CycleColors, opts.Style)
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
@@ -95,6 +120,7 @@ type Settings struct {
 	GradColorA  color.Color
 	GradColorB  color.Color
 	CycleColors bool
+	Style       Style
 }
 
 // Default settings.
@@ -107,10 +133,8 @@ type Anim struct {
 	label            *csync.Slice[string]
 	labelWidth       int
 	labelColor       color.Color
-	startTime        time.Time
-	birthOffsets     []time.Duration
+	style            Style
 	initialFrames    [][]string // frames for the initial characters
-	initialized      atomic.Bool
 	cyclingFrames    [][]string           // frames for the cycling characters
 	step             atomic.Int64         // current main frame step
 	ellipsisStep     atomic.Int64         // current ellipsis frame step
@@ -140,9 +164,9 @@ func New(opts Settings) *Anim {
 	} else {
 		a.id = fmt.Sprintf("%d", nextID())
 	}
-	a.startTime = time.Now()
 	a.cyclingCharWidth = opts.Size
 	a.labelColor = opts.LabelColor
+	a.style = opts.Style
 
 	// Check cache first
 	cacheKey := settingsHash(opts)
@@ -207,7 +231,7 @@ func New(opts Settings) *Anim {
 			}
 		}
 
-		// Prerender scrambled rune frames for the animation.
+		// Prerender frames for the animation based on style.
 		a.cyclingFrames = make([][]string, numFrames)
 		offset = 0
 		for i := range a.cyclingFrames {
@@ -217,9 +241,23 @@ func New(opts Settings) *Anim {
 					continue // skip if we run out of colors
 				}
 
-				// Also prerender the color with Lip Gloss here to avoid processing
-				// in the render loop.
-				r := availableRunes[rand.IntN(len(availableRunes))]
+				var r rune
+				switch opts.Style {
+				case StylePulse:
+					// Pulse animation: cycle through block characters based on frame.
+					pulseIdx := (i + j) % len(pulseChars)
+					r = pulseChars[pulseIdx]
+				case StyleSineWave:
+					// Sine wave animation: use position and frame to create wave.
+					phase := float64(i)/float64(numFrames)*2*math.Pi + float64(j)*0.5
+					sineVal := (math.Sin(phase) + 1) / 2 // Normalize to 0-1.
+					charIdx := int(sineVal * float64(len(sineWaveChars)-1))
+					r = sineWaveChars[charIdx]
+				default:
+					// StyleMatrix: scrambled random characters.
+					r = availableRunes[rand.IntN(len(availableRunes))]
+				}
+
 				a.cyclingFrames[i][j] = lipgloss.NewStyle().
 					Foreground(ramp[j+offset]).
 					Render(string(r))
@@ -247,12 +285,6 @@ func New(opts Settings) *Anim {
 			ellipsisFrames: ellipsisSlice,
 		}
 		animCacheMap.Set(cacheKey, cached)
-	}
-
-	// Random assign a birth to each character for a stagged entrance effect.
-	a.birthOffsets = make([]time.Duration, a.width)
-	for i := range a.birthOffsets {
-		a.birthOffsets[i] = time.Duration(rand.N(int64(maxBirthOffset))) * time.Nanosecond
 	}
 
 	return a
@@ -333,14 +365,12 @@ func (a *Anim) Animate(msg StepMsg) tea.Cmd {
 		a.step.Store(0)
 	}
 
-	if a.initialized.Load() && a.labelWidth > 0 {
+	if a.labelWidth > 0 {
 		// Manage the ellipsis animation.
 		ellipsisStep := a.ellipsisStep.Add(1)
 		if int(ellipsisStep) >= ellipsisAnimSpeed*len(ellipsisFrames) {
 			a.ellipsisStep.Store(0)
 		}
-	} else if !a.initialized.Load() && time.Since(a.startTime) >= maxBirthOffset {
-		a.initialized.Store(true)
 	}
 	return a.Step()
 }
@@ -351,9 +381,6 @@ func (a *Anim) Render() string {
 	step := int(a.step.Load())
 	for i := range a.width {
 		switch {
-		case !a.initialized.Load() && i < len(a.birthOffsets) && time.Since(a.startTime) < a.birthOffsets[i]:
-			// Birth offset not reached: render initial character.
-			b.WriteString(a.initialFrames[step][i])
 		case i < a.cyclingCharWidth:
 			// Render a cycling character.
 			b.WriteString(a.cyclingFrames[step][i])
@@ -369,7 +396,7 @@ func (a *Anim) Render() string {
 	}
 	// Render animated ellipsis at the end of the label if all characters
 	// have been initialized.
-	if a.initialized.Load() && a.labelWidth > 0 {
+	if a.labelWidth > 0 {
 		ellipsisStep := int(a.ellipsisStep.Load())
 		if ellipsisFrame, ok := a.ellipsisFrames.Get(ellipsisStep / ellipsisAnimSpeed); ok {
 			b.WriteString(ellipsisFrame)

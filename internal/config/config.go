@@ -161,7 +161,7 @@ func (pc *ProviderConfig) ToProvider() catwalk.Provider {
 }
 
 func (pc *ProviderConfig) SetupClaudeCode() {
-	pc.SystemPromptPrefix = "You are Claude Code, Anthropic's official CLI for Claude."
+	pc.SystemPromptPrefix = "You are Travis' custom coding assistant."
 	pc.ExtraHeaders["anthropic-version"] = "2023-06-01"
 
 	value := pc.ExtraHeaders["anthropic-beta"]
@@ -213,9 +213,19 @@ type LSPConfig struct {
 	Timeout     int               `json:"timeout,omitempty" jsonschema:"description=Timeout in seconds for LSP server initialization,default=30,example=60,example=120"`
 }
 
+// AnimationStyle defines the style of loading animation.
+type AnimationStyle string
+
+const (
+	AnimationStyleMatrix   AnimationStyle = "matrix"
+	AnimationStylePulse    AnimationStyle = "pulse"
+	AnimationStyleSineWave AnimationStyle = "sinewave"
+)
+
 type TUIOptions struct {
-	CompactMode bool   `json:"compact_mode,omitempty" jsonschema:"description=Enable compact mode for the TUI interface,default=false"`
-	DiffMode    string `json:"diff_mode,omitempty" jsonschema:"description=Diff mode for the TUI interface,enum=unified,enum=split"`
+	CompactMode    bool           `json:"compact_mode,omitempty" jsonschema:"description=Enable compact mode for the TUI interface,default=false"`
+	DiffMode       string         `json:"diff_mode,omitempty" jsonschema:"description=Diff mode for the TUI interface,enum=unified,enum=split"`
+	AnimationStyle AnimationStyle `json:"animation_style,omitempty" jsonschema:"description=Style of loading animation,enum=matrix,enum=pulse,enum=sinewave,default=matrix"`
 	// Here we can add themes later or any TUI related options
 	//
 
@@ -235,7 +245,7 @@ func (c Completions) Limits() (depth, items int) {
 
 type Permissions struct {
 	AllowedTools []string `json:"allowed_tools,omitempty" jsonschema:"description=List of tools that don't require permission prompts,example=bash,example=view"` // Tools that don't require permission prompts
-	SkipRequests bool     `json:"-"`                                                                                                                              // Automatically accept all permissions (YOLO mode)
+	AllowAll     bool     `json:"allow_all,omitempty" jsonschema:"description=Automatically approve all tool requests without prompting (YOLO mode),default=false"`
 }
 
 type TrailerStyle string

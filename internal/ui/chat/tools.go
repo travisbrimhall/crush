@@ -193,6 +193,7 @@ func newBaseToolMessageItem(
 		GradColorB:  sty.Secondary,
 		LabelColor:  sty.FgBase,
 		CycleColors: true,
+		Style:       anim.ParseStyle(sty.AnimationStyle),
 	})
 
 	return t

@@ -200,7 +200,7 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 	if cfg.Permissions == nil {
 		cfg.Permissions = &config.Permissions{}
 	}
-	cfg.Permissions.SkipRequests = yolo
+	cfg.Permissions.AllowAll = yolo
 
 	if err := createDotCrushDir(cfg.Options.DataDirectory); err != nil {
 		return nil, err

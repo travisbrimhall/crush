@@ -10,6 +10,6 @@ You are an agent for Crush. Given the user's prompt, you should use the tools av
 Working directory: {{.WorkingDir}}
 Is directory a git repo: {{if .IsGitRepo}} yes {{else}} no {{end}}
 Platform: {{.Platform}}
-Today's date: {{.Date}}
+Current date/time: {{.DateTime}} (Central Time, Houston)
 </env>
 

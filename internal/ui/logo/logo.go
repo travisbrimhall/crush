@@ -34,11 +34,15 @@ type Opts struct {
 //
 // The compact argument determines whether it renders compact for the sidebar
 // or wider for the main pane.
-func Render(s *styles.Styles, version string, compact bool, o Opts) string {
-	const charm = " Charm"
+func Render(s *styles.Styles, _ string, compact bool, o Opts) string {
+	const custom = " it's just a little"
 
 	fg := func(c color.Color, s string) string {
 		return lipgloss.NewStyle().Foreground(c).Render(s)
+	}
+
+	fgItalic := func(c color.Color, s string) string {
+		return lipgloss.NewStyle().Foreground(c).Italic(true).Render(s)
 	}
 
 	// Title.
@@ -63,12 +67,8 @@ func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 	}
 	crush = b.String()
 
-	// Charm and version.
-	metaRowGap := 1
-	maxVersionWidth := crushWidth - lipgloss.Width(charm) - metaRowGap
-	version = ansi.Truncate(version, maxVersionWidth, "…") // truncate version if too long.
-	gap := max(0, crushWidth-lipgloss.Width(charm)-lipgloss.Width(version))
-	metaRow := fg(o.CharmColor, charm) + strings.Repeat(" ", gap) + fg(o.VersionColor, version)
+	// "Custom" label above the logo.
+	metaRow := fgItalic(o.CharmColor, custom)
 
 	// Join the meta row and big Crush title.
 	crush = strings.TrimSpace(metaRow + "\n" + crush)
@@ -118,9 +118,9 @@ func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 // SmallRender renders a smaller version of the Crush logo, suitable for
 // smaller windows or sidebar usage.
 func SmallRender(t *styles.Styles, width int) string {
-	title := t.Base.Foreground(t.Secondary).Render("Charm")
-	title = fmt.Sprintf("%s %s", title, styles.ApplyBoldForegroundGrad(t, "Crush", t.Secondary, t.Primary))
-	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space after "Crush"
+	prefix := t.Base.Foreground(t.Secondary).Italic(true).Render("it's just a little")
+	title := fmt.Sprintf("%s %s", prefix, styles.ApplyBoldForegroundGrad(t, "Crush", t.Secondary, t.Primary))
+	remainingWidth := width - lipgloss.Width(title) - 1
 	if remainingWidth > 0 {
 		lines := strings.Repeat("╱", remainingWidth)
 		title = fmt.Sprintf("%s %s", title, t.Base.Foreground(t.Primary).Render(lines))

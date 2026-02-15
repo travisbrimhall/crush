@@ -33,7 +33,7 @@ type PromptDat struct {
 	WorkingDir    string
 	IsGitRepo     bool
 	Platform      string
-	Date          string
+	DateTime      string
 	GitStatus     string
 	ContextFiles  []ContextFile
 	AvailSkillXML string
@@ -184,7 +184,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		WorkingDir:    filepath.ToSlash(workingDir),
 		IsGitRepo:     isGit,
 		Platform:      platform,
-		Date:          p.now().Format("1/2/2006"),
+		DateTime:      p.now().Format("1/2/2006 3:04 PM"),
 		AvailSkillXML: availSkillXML,
 	}
 	if isGit {
