@@ -34,6 +34,7 @@ import (
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
+	"github.com/charmbracelet/crush/internal/summary"
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/update"
@@ -57,6 +58,7 @@ type App struct {
 	Permissions permission.Service
 	FileTracker filetracker.Service
 	Memory      memory.MemoryStore
+	Summaries   *summary.Store
 
 	AgentCoordinator agent.Coordinator
 
@@ -98,6 +100,9 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		// Non-fatal: continue without memory
 	}
 
+	// Initialize summary store for searchable session summaries.
+	summaryStore := summary.NewStore(q, ollamaURL, ollamaModel)
+
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
@@ -105,6 +110,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		Permissions: permission.NewPermissionService(cfg.WorkingDir(), skipPermissionsRequests, allowedTools),
 		FileTracker: filetracker.NewService(q),
 		Memory:      memoryStore,
+		Summaries:   summaryStore,
 		LSPManager:  lsp.NewManager(cfg),
 
 		globalCtx: ctx,
@@ -512,6 +518,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.FileTracker,
 		app.LSPManager,
 		app.Memory,
+		app.Summaries,
 	)
 	if err != nil {
 		slog.Error("Failed to create coder agent", "err", err)

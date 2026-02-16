@@ -30,6 +30,7 @@ import (
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/summary"
 	"golang.org/x/sync/errgroup"
 
 	"charm.land/fantasy/providers/anthropic"
@@ -69,6 +70,7 @@ type coordinator struct {
 	filetracker filetracker.Service
 	lspManager  *lsp.Manager
 	memory      memory.MemoryStore
+	summaries   *summary.Store
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -86,6 +88,7 @@ func NewCoordinator(
 	filetracker filetracker.Service,
 	lspManager *lsp.Manager,
 	memoryStore memory.MemoryStore,
+	summaryStore *summary.Store,
 ) (Coordinator, error) {
 	c := &coordinator{
 		cfg:         cfg,
@@ -96,6 +99,7 @@ func NewCoordinator(
 		filetracker: filetracker,
 		lspManager:  lspManager,
 		memory:      memoryStore,
+		summaries:   summaryStore,
 		agents:      make(map[string]SessionAgent),
 	}
 
@@ -908,7 +912,20 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	if !ok {
 		return errors.New("model provider not configured")
 	}
-	return c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg))
+	summaryText, err := c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg))
+	if err != nil {
+		return err
+	}
+
+	// Save summary to summary store for cross-session search.
+	if c.summaries != nil && summaryText != "" {
+		if _, saveErr := c.summaries.Save(ctx, sessionID, summaryText, nil); saveErr != nil {
+			slog.Warn("Failed to save session summary", "error", saveErr)
+			// Non-fatal: summarization succeeded, just couldn't save for search
+		}
+	}
+
+	return nil
 }
 
 func (c *coordinator) isUnauthorized(err error) bool {

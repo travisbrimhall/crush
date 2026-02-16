@@ -86,7 +86,7 @@ type SessionAgent interface {
 	QueuedPrompts(sessionID string) int
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
-	Summarize(context.Context, string, fantasy.ProviderOptions) error
+	Summarize(context.Context, string, fantasy.ProviderOptions) (string, error)
 	Model() Model
 }
 
@@ -532,7 +532,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	if shouldSummarize {
 		a.activeRequests.Del(call.SessionID)
-		if summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
+		if _, summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
 			return nil, summarizeErr
 		}
 		// If the agent wasn't done...
@@ -561,9 +561,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	return a.Run(ctx, firstQueuedMessage)
 }
 
-func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {
+func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) (string, error) {
 	if a.IsSessionBusy(sessionID) {
-		return ErrSessionBusy
+		return "", ErrSessionBusy
 	}
 
 	// Copy mutable fields under lock to avoid races with SetModels.
@@ -572,15 +572,15 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
+		return "", fmt.Errorf("failed to get session: %w", err)
 	}
 	msgs, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(msgs) == 0 {
 		// Nothing to summarize.
-		return nil
+		return "", nil
 	}
 
 	aiMsgs, _ := a.preparePrompt(msgs)
@@ -600,7 +600,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		IsSummaryMessage: true,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
@@ -640,15 +640,15 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		if isCancelErr {
 			// User cancelled summarize we need to remove the summary message.
 			deleteErr := a.messages.Delete(ctx, summaryMessage.ID)
-			return deleteErr
+			return "", deleteErr
 		}
-		return err
+		return "", err
 	}
 
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
 	err = a.messages.Update(genCtx, summaryMessage)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	var openrouterCost *float64
@@ -671,7 +671,13 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	currentSession.CompletionTokens = usage.OutputTokens
 	currentSession.PromptTokens = 0
 	_, err = a.sessions.Save(genCtx, currentSession)
-	return err
+	if err != nil {
+		return "", err
+	}
+
+	// Extract and return the summary text.
+	summaryText := summaryMessage.Content().Text
+	return summaryText, nil
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
