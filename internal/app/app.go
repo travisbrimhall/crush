@@ -56,7 +56,7 @@ type App struct {
 	History     history.Service
 	Permissions permission.Service
 	FileTracker filetracker.Service
-	Memory      *memory.Store
+	Memory      memory.MemoryStore
 
 	AgentCoordinator agent.Coordinator
 
@@ -86,13 +86,13 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		allowedTools = cfg.Permissions.AllowedTools
 	}
 
-	// Initialize memory store with optional vector embeddings.
+	// Initialize memory store with optional vector embeddings and associative links.
 	var ollamaURL, ollamaModel string
 	if cfg.Options != nil {
 		ollamaURL = cfg.Options.OllamaURL
 		ollamaModel = cfg.Options.OllamaEmbedModel
 	}
-	memoryStore, err := memory.NewStoreWithEmbeddings(conn, ollamaURL, ollamaModel)
+	memoryStore, err := memory.NewAssociativeStore(conn, ollamaURL, ollamaModel)
 	if err != nil {
 		slog.Warn("Failed to initialize memory store", "error", err)
 		// Non-fatal: continue without memory
