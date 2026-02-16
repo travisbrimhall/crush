@@ -13,13 +13,14 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/projects"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	ui "github.com/charmbracelet/crush/internal/ui/model"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/gliderlabs/ssh"
 	"github.com/spf13/cobra"
 	gossh "golang.org/x/crypto/ssh"
@@ -154,11 +155,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		var uvEnv uv.Environ = env
 
 		// Create program with SSH input/output.
+		// Force TrueColor profile since colorprofile.Detect() doesn't work over
+		// SSH (output isn't a real TTY file descriptor).
 		program := tea.NewProgram(
 			model,
 			tea.WithInput(s),
 			tea.WithOutput(s),
 			tea.WithEnvironment(uvEnv),
+			tea.WithColorProfile(colorprofile.TrueColor),
 		)
 
 		go appInstance.Subscribe(program)
