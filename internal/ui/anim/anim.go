@@ -134,7 +134,7 @@ type Anim struct {
 	labelWidth       int
 	labelColor       color.Color
 	style            Style
-	initialFrames    [][]string // frames for the initial characters
+	initialFrames    [][]string           // frames for the initial characters
 	cyclingFrames    [][]string           // frames for the cycling characters
 	step             atomic.Int64         // current main frame step
 	ellipsisStep     atomic.Int64         // current ellipsis frame step

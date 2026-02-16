@@ -288,6 +288,8 @@ type Options struct {
 	AutoLSP                   *bool        `json:"auto_lsp,omitempty" jsonschema:"description=Automatically setup LSPs based on root markers,default=true"`
 	Progress                  *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
 	UnbanCommands             []string     `json:"unban_commands,omitempty" jsonschema:"description=Commands to remove from the default banned commands list,example=ssh,example=curl,example=wget"`
+	OllamaURL                 string       `json:"ollama_url,omitempty" jsonschema:"description=URL for Ollama server to enable semantic memory search,example=http://localhost:11434,example=http://mac-studio.local:11434"`
+	OllamaEmbedModel          string       `json:"ollama_embed_model,omitempty" jsonschema:"description=Ollama model for embeddings,default=all-minilm,example=all-minilm,example=nomic-embed-text"`
 }
 
 type MCPs map[string]MCPConfig
@@ -756,6 +758,8 @@ func allToolNames() []string {
 		"write",
 		"list_mcp_resources",
 		"read_mcp_resource",
+		"remember",
+		"recall",
 	}
 }
 

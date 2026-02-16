@@ -4,6 +4,7 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 - Provide file path to read
 - Optional offset: start reading from specific line (0-based)
 - Optional limit: control lines read (default 2000)
+- Optional show_hashes: include short line hashes for stable references (default false)
 - Don't use for directories (use LS tool instead)
 - Supports image files (PNG, JPEG, GIF, BMP, SVG, WebP)
 </usage>
@@ -15,6 +16,7 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 - Auto-truncates very long lines for display
 - Suggests similar filenames when file not found
 - Renders image files directly in terminal
+- Line hashes provide stable identifiers for referencing specific lines
 </features>
 
 <limitations>

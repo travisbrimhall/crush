@@ -23,15 +23,17 @@ import (
 var viewDescription []byte
 
 type ViewParams struct {
-	FilePath string `json:"file_path" description:"The path to the file to read"`
-	Offset   int    `json:"offset,omitempty" description:"The line number to start reading from (0-based)"`
-	Limit    int    `json:"limit,omitempty" description:"The number of lines to read (defaults to 2000)"`
+	FilePath   string `json:"file_path" description:"The path to the file to read"`
+	Offset     int    `json:"offset,omitempty" description:"The line number to start reading from (0-based)"`
+	Limit      int    `json:"limit,omitempty" description:"The number of lines to read (defaults to 2000)"`
+	ShowHashes bool   `json:"show_hashes,omitempty" description:"If true, show short line hashes for stable line references (default false)"`
 }
 
 type ViewPermissionsParams struct {
-	FilePath string `json:"file_path"`
-	Offset   int    `json:"offset"`
-	Limit    int    `json:"limit"`
+	FilePath   string `json:"file_path"`
+	Offset     int    `json:"offset"`
+	Limit      int    `json:"limit"`
+	ShowHashes bool   `json:"show_hashes"`
 }
 
 type ViewResponseMetadata struct {
@@ -185,8 +187,12 @@ func NewViewTool(
 
 			notifyLSPs(ctx, lspManager, filePath)
 			output := "<file>\n"
-			// Format the output with line numbers
-			output += addLineNumbers(content, params.Offset+1)
+			// Format the output with line numbers (and optionally hashes).
+			if params.ShowHashes {
+				output += addLineNumbersWithHashes(content, params.Offset+1)
+			} else {
+				output += addLineNumbers(content, params.Offset+1)
+			}
 
 			// Add a note if the content was truncated
 			if lineCount > params.Offset+len(strings.Split(content, "\n")) {

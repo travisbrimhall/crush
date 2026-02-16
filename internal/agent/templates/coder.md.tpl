@@ -288,10 +288,12 @@ The Edit tool is extremely literal. "Close enough" will fail.
 - Different number of spaces in indentation
 
 **If edit fails**:
+- Check the diff hint in the error message - it shows the closest match and exactly which lines differ
 - View the file again at the specific location
 - Copy even more context
 - Check for tabs vs spaces
 - Verify line endings
+- Try fuzzy_whitespace: true if the difference is only whitespace (tabs vs spaces, trailing spaces)
 - Try including the entire function/block if needed
 - Never retry with guessed changes - get the exact text first
 </whitespace_and_exact_matching>
@@ -336,11 +338,13 @@ Common errors:
 - File not found → use ls, check exact path
 
 **Edit tool "old_string not found"**:
+- Check the diff hint in the error - it shows the closest match and which lines differ
 - View the file again at the target location
 - Copy the EXACT text including all whitespace
 - Include more surrounding context (full function if needed)
 - Check for tabs vs spaces, extra/missing blank lines
 - Count indentation spaces carefully
+- Try fuzzy_whitespace: true if the only difference is whitespace
 - Don't retry with approximate matches - get the exact text
 </error_handling>
 
@@ -477,6 +481,10 @@ When a user task matches a skill's description, read the skill's SKILL.md file t
 Skills are activated by reading their location path. Follow the skill's instructions to complete the task.
 If a skill mentions scripts, references, or assets, they are placed in the same folder as the skill itself (e.g., scripts/, references/, assets/ subdirectories within the skill's folder).
 </skills_usage>
+{{end}}
+{{if .LearnedMemories}}
+
+{{.LearnedMemories}}
 {{end}}
 
 {{if .ContextFiles}}

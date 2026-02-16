@@ -410,12 +410,14 @@ func applyEditToContent(content string, edit MultiEditOperation) (string, error)
 		newContent = strings.ReplaceAll(content, edit.OldString, edit.NewString)
 		replacementCount = strings.Count(content, edit.OldString)
 		if replacementCount == 0 {
-			return "", fmt.Errorf("old_string not found in content. Make sure it matches exactly, including whitespace and line breaks")
+			hint := generateNotFoundError(content, edit.OldString)
+			return "", fmt.Errorf("%s", hint)
 		}
 	} else {
 		index := strings.Index(content, edit.OldString)
 		if index == -1 {
-			return "", fmt.Errorf("old_string not found in content. Make sure it matches exactly, including whitespace and line breaks")
+			hint := generateNotFoundError(content, edit.OldString)
+			return "", fmt.Errorf("%s", hint)
 		}
 
 		lastIndex := strings.LastIndex(content, edit.OldString)

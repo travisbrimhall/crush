@@ -11,6 +11,7 @@ Edits files by replacing text, creating new files, or deleting content. For movi
 2. old_string: Text to replace (must match exactly including whitespace/indentation)
 3. new_string: Replacement text
 4. replace_all: Replace all occurrences (default false)
+5. fuzzy_whitespace: If true, ignore trailing whitespace and treat tabs as spaces when matching (default false). Use this when edits fail due to whitespace differences.
 </parameters>
 
 <special_cases>
@@ -76,14 +77,16 @@ Tool fails if:
 <recovery_steps>
 If you get "old_string not found in file":
 
-1. **View the file again** at the specific location
-2. **Copy more context** - include entire function if needed
-3. **Check whitespace**:
+1. **Check the diff hint** in the error message - it shows the closest match and exactly which lines differ
+2. **View the file again** at the specific location
+3. **Copy more context** - include entire function if needed
+4. **Check whitespace**:
    - Count indentation spaces/tabs
    - Look for blank lines
    - Check for trailing spaces
-4. **Verify character-by-character** that your old_string matches
-5. **Never guess** - always View the file to get exact text
+5. **Try fuzzy_whitespace: true** if the difference is only whitespace (tabs vs spaces, trailing spaces)
+6. **Verify character-by-character** that your old_string matches
+7. **Never guess** - always View the file to get exact text
    </recovery_steps>
 
 <best_practices>

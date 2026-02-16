@@ -22,10 +22,11 @@ import (
 )
 
 type EditParams struct {
-	FilePath   string `json:"file_path" description:"The absolute path to the file to modify"`
-	OldString  string `json:"old_string" description:"The text to replace"`
-	NewString  string `json:"new_string" description:"The text to replace it with"`
-	ReplaceAll bool   `json:"replace_all,omitempty" description:"Replace all occurrences of old_string (default false)"`
+	FilePath        string `json:"file_path" description:"The absolute path to the file to modify"`
+	OldString       string `json:"old_string" description:"The text to replace"`
+	NewString       string `json:"new_string" description:"The text to replace it with"`
+	ReplaceAll      bool   `json:"replace_all,omitempty" description:"Replace all occurrences of old_string (default false)"`
+	FuzzyWhitespace bool   `json:"fuzzy_whitespace,omitempty" description:"If true, ignore trailing whitespace and treat tabs as spaces when matching (default false)"`
 }
 
 type EditPermissionsParams struct {
@@ -84,9 +85,9 @@ func NewEditTool(
 			if params.OldString == "" {
 				response, err = createNewFile(editCtx, params.FilePath, params.NewString, call)
 			} else if params.NewString == "" {
-				response, err = deleteContent(editCtx, params.FilePath, params.OldString, params.ReplaceAll, call)
+				response, err = deleteContent(editCtx, params.FilePath, params.OldString, params.ReplaceAll, params.FuzzyWhitespace, call)
 			} else {
-				response, err = replaceContent(editCtx, params.FilePath, params.OldString, params.NewString, params.ReplaceAll, call)
+				response, err = replaceContent(editCtx, params.FilePath, params.OldString, params.NewString, params.ReplaceAll, params.FuzzyWhitespace, call)
 			}
 
 			if err != nil {
@@ -187,7 +188,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	), nil
 }
 
-func deleteContent(edit editContext, filePath, oldString string, replaceAll bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+func deleteContent(edit editContext, filePath, oldString string, replaceAll, fuzzyWhitespace bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -226,21 +227,46 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 	oldContent, isCrlf := fsext.ToUnixLineEndings(string(content))
 
 	var newContent string
+	searchContent := oldContent
+	searchString := oldString
+
+	// If fuzzy whitespace matching is enabled, normalize both strings for comparison.
+	if fuzzyWhitespace {
+		searchContent = normalizeWhitespace(oldContent)
+		searchString = normalizeWhitespace(oldString)
+	}
 
 	if replaceAll {
-		newContent = strings.ReplaceAll(oldContent, oldString, "")
+		if fuzzyWhitespace {
+			// For fuzzy matching with replaceAll, we need to find and replace
+			// using the original content positions.
+			newContent = fuzzyReplaceAll(oldContent, oldString, "")
+		} else {
+			newContent = strings.ReplaceAll(oldContent, oldString, "")
+		}
 		if newContent == oldContent {
-			return oldStringNotFoundErr, nil
+			hint := generateNotFoundError(oldContent, oldString)
+			return fantasy.NewTextErrorResponse(hint), nil
 		}
 	} else {
-		index := strings.Index(oldContent, oldString)
+		index := strings.Index(searchContent, searchString)
 		if index == -1 {
-			return oldStringNotFoundErr, nil
+			hint := generateNotFoundError(oldContent, oldString)
+			return fantasy.NewTextErrorResponse(hint), nil
 		}
 
-		lastIndex := strings.LastIndex(oldContent, oldString)
+		lastIndex := strings.LastIndex(searchContent, searchString)
 		if index != lastIndex {
 			return fantasy.NewTextErrorResponse("old_string appears multiple times in the file. Please provide more context to ensure a unique match, or set replace_all to true"), nil
+		}
+
+		// If using fuzzy matching, find the actual position in original content.
+		if fuzzyWhitespace {
+			index = findFuzzyIndex(oldContent, oldString)
+			if index == -1 {
+				hint := generateNotFoundError(oldContent, oldString)
+				return fantasy.NewTextErrorResponse(hint), nil
+			}
 		}
 
 		newContent = oldContent[:index] + oldContent[index+len(oldString):]
@@ -318,7 +344,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 	), nil
 }
 
-func replaceContent(edit editContext, filePath, oldString, newString string, replaceAll bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+func replaceContent(edit editContext, filePath, oldString, newString string, replaceAll, fuzzyWhitespace bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -357,18 +383,40 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	oldContent, isCrlf := fsext.ToUnixLineEndings(string(content))
 
 	var newContent string
+	searchContent := oldContent
+	searchString := oldString
+
+	// If fuzzy whitespace matching is enabled, normalize both strings for comparison.
+	if fuzzyWhitespace {
+		searchContent = normalizeWhitespace(oldContent)
+		searchString = normalizeWhitespace(oldString)
+	}
 
 	if replaceAll {
-		newContent = strings.ReplaceAll(oldContent, oldString, newString)
+		if fuzzyWhitespace {
+			newContent = fuzzyReplaceAll(oldContent, oldString, newString)
+		} else {
+			newContent = strings.ReplaceAll(oldContent, oldString, newString)
+		}
 	} else {
-		index := strings.Index(oldContent, oldString)
+		index := strings.Index(searchContent, searchString)
 		if index == -1 {
-			return oldStringNotFoundErr, nil
+			hint := generateNotFoundError(oldContent, oldString)
+			return fantasy.NewTextErrorResponse(hint), nil
 		}
 
-		lastIndex := strings.LastIndex(oldContent, oldString)
+		lastIndex := strings.LastIndex(searchContent, searchString)
 		if index != lastIndex {
 			return oldStringMultipleMatchesErr, nil
+		}
+
+		// If using fuzzy matching, find the actual position in original content.
+		if fuzzyWhitespace {
+			index = findFuzzyIndex(oldContent, oldString)
+			if index == -1 {
+				hint := generateNotFoundError(oldContent, oldString)
+				return fantasy.NewTextErrorResponse(hint), nil
+			}
 		}
 
 		newContent = oldContent[:index] + newString + oldContent[index+len(oldString):]

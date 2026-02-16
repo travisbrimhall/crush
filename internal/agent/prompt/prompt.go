@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,26 +18,39 @@ import (
 	"github.com/charmbracelet/crush/internal/skills"
 )
 
+// MemoryReader provides access to learned memories for prompt building.
+type MemoryReader interface {
+	Recent(ctx context.Context, limit int) ([]MemoryEntry, error)
+}
+
+// MemoryEntry represents a single memory for prompt building.
+type MemoryEntry struct {
+	Category string
+	Content  string
+}
+
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
-	name       string
-	template   string
-	now        func() time.Time
-	platform   string
-	workingDir string
+	name         string
+	template     string
+	now          func() time.Time
+	platform     string
+	workingDir   string
+	memoryReader MemoryReader
 }
 
 type PromptDat struct {
-	Provider      string
-	Model         string
-	Config        config.Config
-	WorkingDir    string
-	IsGitRepo     bool
-	Platform      string
-	DateTime      string
-	GitStatus     string
-	ContextFiles  []ContextFile
-	AvailSkillXML string
+	Provider        string
+	Model           string
+	Config          config.Config
+	WorkingDir      string
+	IsGitRepo       bool
+	Platform        string
+	DateTime        string
+	GitStatus       string
+	ContextFiles    []ContextFile
+	AvailSkillXML   string
+	LearnedMemories string
 }
 
 type ContextFile struct {
@@ -61,6 +75,12 @@ func WithPlatform(platform string) Option {
 func WithWorkingDir(workingDir string) Option {
 	return func(p *Prompt) {
 		p.workingDir = workingDir
+	}
+}
+
+func WithMemoryReader(mr MemoryReader) Option {
+	return func(p *Prompt) {
+		p.memoryReader = mr
 	}
 }
 
@@ -176,16 +196,28 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		}
 	}
 
+	// Load learned memories if available.
+	var learnedMemories string
+	if p.memoryReader != nil {
+		memories, err := p.memoryReader.Recent(ctx, 50)
+		if err != nil {
+			slog.Warn("Failed to load memories for prompt", "error", err)
+		} else {
+			learnedMemories = formatMemoriesForPrompt(memories)
+		}
+	}
+
 	isGit := isGitRepo(cfg.WorkingDir())
 	data := PromptDat{
-		Provider:      provider,
-		Model:         model,
-		Config:        cfg,
-		WorkingDir:    filepath.ToSlash(workingDir),
-		IsGitRepo:     isGit,
-		Platform:      platform,
-		DateTime:      p.now().Format("1/2/2006 3:04 PM"),
-		AvailSkillXML: availSkillXML,
+		Provider:        provider,
+		Model:           model,
+		Config:          cfg,
+		WorkingDir:      filepath.ToSlash(workingDir),
+		IsGitRepo:       isGit,
+		Platform:        platform,
+		DateTime:        p.now().Format("1/2/2006 3:04 PM"),
+		AvailSkillXML:   availSkillXML,
+		LearnedMemories: learnedMemories,
 	}
 	if isGit {
 		var err error
@@ -256,6 +288,34 @@ func getGitRecentCommits(ctx context.Context, sh *shell.Shell) (string, error) {
 	}
 	out = strings.TrimSpace(out)
 	return fmt.Sprintf("Recent commits:\n%s\n", out), nil
+}
+
+// formatMemoriesForPrompt formats learned memories for inclusion in the prompt.
+func formatMemoriesForPrompt(entries []MemoryEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<learned_memories>\n")
+	sb.WriteString("These are things you've learned across previous sessions. Use them to inform your work.\n\n")
+
+	// Group by category.
+	categories := make(map[string][]MemoryEntry)
+	for _, e := range entries {
+		categories[e.Category] = append(categories[e.Category], e)
+	}
+
+	for category, memories := range categories {
+		sb.WriteString(fmt.Sprintf("## %s\n", category))
+		for _, m := range memories {
+			sb.WriteString(fmt.Sprintf("- %s\n", m.Content))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("</learned_memories>")
+	return sb.String()
 }
 
 func (p *Prompt) Name() string {

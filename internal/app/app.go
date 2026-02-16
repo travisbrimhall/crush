@@ -28,6 +28,7 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
+	"github.com/charmbracelet/crush/internal/memory"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -55,6 +56,7 @@ type App struct {
 	History     history.Service
 	Permissions permission.Service
 	FileTracker filetracker.Service
+	Memory      *memory.Store
 
 	AgentCoordinator agent.Coordinator
 
@@ -84,12 +86,25 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		allowedTools = cfg.Permissions.AllowedTools
 	}
 
+	// Initialize memory store with optional vector embeddings.
+	var ollamaURL, ollamaModel string
+	if cfg.Options != nil {
+		ollamaURL = cfg.Options.OllamaURL
+		ollamaModel = cfg.Options.OllamaEmbedModel
+	}
+	memoryStore, err := memory.NewStoreWithEmbeddings(conn, ollamaURL, ollamaModel)
+	if err != nil {
+		slog.Warn("Failed to initialize memory store", "error", err)
+		// Non-fatal: continue without memory
+	}
+
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
 		History:     files,
 		Permissions: permission.NewPermissionService(cfg.WorkingDir(), skipPermissionsRequests, allowedTools),
 		FileTracker: filetracker.NewService(q),
+		Memory:      memoryStore,
 		LSPManager:  lsp.NewManager(cfg),
 
 		globalCtx: ctx,
@@ -496,6 +511,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.History,
 		app.FileTracker,
 		app.LSPManager,
+		app.Memory,
 	)
 	if err != nil {
 		slog.Error("Failed to create coder agent", "err", err)

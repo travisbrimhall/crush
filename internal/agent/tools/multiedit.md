@@ -55,11 +55,12 @@ Use the same level of precision as Edit. Multiedit often fails due to formatting
 
 <recovery_steps>
 If some edits fail:
-1. Check the response metadata for the list of failed edits with their error messages.
-2. View the file again to see the current state after successful edits.
-3. Adjust the failed edits based on the new file content.
-4. Retry the failed edits with corrected old_string values.
-5. Consider breaking complex batches into smaller, independent operations.
+1. **Check the diff hints** in the error messages - they show the closest match and exactly which lines differ.
+2. Check the response metadata for the list of failed edits with their error messages.
+3. View the file again to see the current state after successful edits.
+4. Adjust the failed edits based on the new file content.
+5. Retry the failed edits with corrected old_string values.
+6. Consider breaking complex batches into smaller, independent operations.
 </recovery_steps>
 
 <best_practices>
