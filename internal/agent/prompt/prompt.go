@@ -29,28 +29,41 @@ type MemoryEntry struct {
 	Content  string
 }
 
+// SummaryReader provides access to past session summaries for prompt building.
+type SummaryReader interface {
+	Recent(ctx context.Context, limit int) ([]SummaryEntry, error)
+}
+
+// SummaryEntry represents a past session summary for prompt building.
+type SummaryEntry struct {
+	SessionID string
+	Summary   string
+}
+
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
-	name         string
-	template     string
-	now          func() time.Time
-	platform     string
-	workingDir   string
-	memoryReader MemoryReader
+	name          string
+	template      string
+	now           func() time.Time
+	platform      string
+	workingDir    string
+	memoryReader  MemoryReader
+	summaryReader SummaryReader
 }
 
 type PromptDat struct {
-	Provider        string
-	Model           string
-	Config          config.Config
-	WorkingDir      string
-	IsGitRepo       bool
-	Platform        string
-	DateTime        string
-	GitStatus       string
-	ContextFiles    []ContextFile
-	AvailSkillXML   string
-	LearnedMemories string
+	Provider         string
+	Model            string
+	Config           config.Config
+	WorkingDir       string
+	IsGitRepo        bool
+	Platform         string
+	DateTime         string
+	GitStatus        string
+	ContextFiles     []ContextFile
+	AvailSkillXML    string
+	LearnedMemories  string
+	RecentSummaries  string
 }
 
 type ContextFile struct {
@@ -81,6 +94,12 @@ func WithWorkingDir(workingDir string) Option {
 func WithMemoryReader(mr MemoryReader) Option {
 	return func(p *Prompt) {
 		p.memoryReader = mr
+	}
+}
+
+func WithSummaryReader(sr SummaryReader) Option {
+	return func(p *Prompt) {
+		p.summaryReader = sr
 	}
 }
 
@@ -207,6 +226,17 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		}
 	}
 
+	// Load recent session summaries if available.
+	var recentSummaries string
+	if p.summaryReader != nil {
+		summaries, err := p.summaryReader.Recent(ctx, 5)
+		if err != nil {
+			slog.Warn("Failed to load summaries for prompt", "error", err)
+		} else {
+			recentSummaries = formatSummariesForPrompt(summaries)
+		}
+	}
+
 	isGit := isGitRepo(cfg.WorkingDir())
 	data := PromptDat{
 		Provider:        provider,
@@ -218,6 +248,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		DateTime:        p.now().Format("1/2/2006 3:04 PM"),
 		AvailSkillXML:   availSkillXML,
 		LearnedMemories: learnedMemories,
+		RecentSummaries: recentSummaries,
 	}
 	if isGit {
 		var err error
@@ -315,6 +346,32 @@ func formatMemoriesForPrompt(entries []MemoryEntry) string {
 	}
 
 	sb.WriteString("</learned_memories>")
+	return sb.String()
+}
+
+// formatSummariesForPrompt formats recent session summaries for inclusion in the prompt.
+func formatSummariesForPrompt(entries []SummaryEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<past_sessions>\n")
+	sb.WriteString("These are summaries from PREVIOUS sessions. They are NOT part of the current conversation.\n")
+	sb.WriteString("Reference them if clearly relevant or if the user asks about past work.\n")
+	sb.WriteString("Some may relate to ongoing projects; use judgment to connect context when appropriate.\n\n")
+
+	for i, e := range entries {
+		sessionLabel := e.SessionID
+		if len(sessionLabel) > 8 {
+			sessionLabel = sessionLabel[:8]
+		}
+		sb.WriteString(fmt.Sprintf("### Past Session %d (%s)\n", i+1, sessionLabel))
+		sb.WriteString(e.Summary)
+		sb.WriteString("\n\n---\n\n")
+	}
+
+	sb.WriteString("</past_sessions>")
 	return sb.String()
 }
 

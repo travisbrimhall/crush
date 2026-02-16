@@ -169,6 +169,23 @@ func (s *Store) GetBySessionID(ctx context.Context, sessionID string) (*Summary,
 	return s.rowToSummary(row), nil
 }
 
+// Recent returns the N most recent summaries.
+func (s *Store) Recent(ctx context.Context, limit int) ([]Summary, error) {
+	rows, err := s.queries.ListSessionSummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]Summary, 0, limit)
+	for _, row := range rows {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, *s.rowToSummary(row))
+	}
+	return results, nil
+}
+
 // Delete removes a summary by ID.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	return s.queries.DeleteSessionSummary(ctx, id)
