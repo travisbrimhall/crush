@@ -6,13 +6,13 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 )
 
-// PromptAdapter wraps a Store to implement prompt.MemoryReader.
+// PromptAdapter wraps a MemoryStore to implement prompt.MemoryReader.
 type PromptAdapter struct {
-	store *Store
+	store MemoryStore
 }
 
 // NewPromptAdapter creates a new adapter for prompt building.
-func NewPromptAdapter(store *Store) *PromptAdapter {
+func NewPromptAdapter(store MemoryStore) *PromptAdapter {
 	if store == nil {
 		return nil
 	}

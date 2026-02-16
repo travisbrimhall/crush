@@ -21,7 +21,11 @@ type RememberParams struct {
 const RememberToolName = "remember"
 
 // NewRememberTool creates a tool that allows the agent to store persistent memories.
-func NewRememberTool(store *memory.Store) fantasy.AgentTool {
+// If an AssociativeMemoryStore is provided, automatically creates links to related memories.
+func NewRememberTool(store memory.MemoryStore) fantasy.AgentTool {
+	// Check if we have associative capabilities.
+	assocStore, hasAssociative := store.(memory.AssociativeMemoryStore)
+
 	return fantasy.NewAgentTool(
 		RememberToolName,
 		string(rememberDescription),
@@ -54,7 +58,15 @@ func NewRememberTool(store *memory.Store) fantasy.AgentTool {
 				Source:   sessionID,
 			}
 
-			if err := store.Save(ctx, entry); err != nil {
+			// Use associative save if available (creates links to related memories).
+			var err error
+			if hasAssociative {
+				err = assocStore.SaveWithLinks(ctx, entry)
+			} else {
+				err = store.Save(ctx, entry)
+			}
+
+			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("failed to save memory: %w", err)
 			}
 

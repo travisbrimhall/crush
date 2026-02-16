@@ -68,7 +68,7 @@ type coordinator struct {
 	history     history.Service
 	filetracker filetracker.Service
 	lspManager  *lsp.Manager
-	memory      *memory.Store
+	memory      memory.MemoryStore
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -85,7 +85,7 @@ func NewCoordinator(
 	history history.Service,
 	filetracker filetracker.Service,
 	lspManager *lsp.Manager,
-	memoryStore *memory.Store,
+	memoryStore memory.MemoryStore,
 ) (Coordinator, error) {
 	c := &coordinator{
 		cfg:         cfg,

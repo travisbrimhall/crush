@@ -17,12 +17,17 @@ type RecallParams struct {
 	Query    string `json:"query,omitempty" description:"Search query to find relevant memories. Leave empty to get recent memories."`
 	Category string `json:"category,omitempty" description:"Filter by category: 'preference', 'learning', 'decision', 'fact'. Leave empty for all."`
 	Limit    int    `json:"limit,omitempty" description:"Maximum number of memories to return. Default 10."`
+	Hops     int    `json:"hops,omitempty" description:"For associative recall: how many links to follow from initial matches. Default 2."`
 }
 
 const RecallToolName = "recall"
 
 // NewRecallTool creates a tool that allows the agent to retrieve stored memories.
-func NewRecallTool(store *memory.Store) fantasy.AgentTool {
+// If an AssociativeMemoryStore is provided, uses graph traversal for queries.
+func NewRecallTool(store memory.MemoryStore) fantasy.AgentTool {
+	// Check if we have associative capabilities.
+	assocStore, hasAssociative := store.(memory.AssociativeMemoryStore)
+
 	return fantasy.NewAgentTool(
 		RecallToolName,
 		string(recallDescription),
@@ -39,7 +44,16 @@ func NewRecallTool(store *memory.Store) fantasy.AgentTool {
 			var err error
 
 			if params.Query != "" {
-				entries, err = store.Search(ctx, params.Query)
+				// Use associative retrieval if available.
+				if hasAssociative {
+					hops := params.Hops
+					if hops <= 0 {
+						hops = 2
+					}
+					entries, err = assocStore.Associate(ctx, params.Query, hops)
+				} else {
+					entries, err = store.Search(ctx, params.Query)
+				}
 			} else if params.Category != "" {
 				entries, err = store.List(ctx, params.Category)
 			} else {
