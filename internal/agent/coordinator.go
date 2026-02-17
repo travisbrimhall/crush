@@ -1022,18 +1022,31 @@ func (c *coordinator) TidyContext(ctx context.Context, sessionID, instructions s
 	// Build the context for the tidy prompt.
 	var historyText strings.Builder
 	for i, msg := range msgs {
-		if msg.Role != message.Tool {
-			continue
-		}
-		for _, tr := range msg.ToolResults() {
-			if len(tr.Content) < 500 {
-				continue // Skip small tool results.
+		switch msg.Role {
+		case message.Tool:
+			for _, tr := range msg.ToolResults() {
+				if len(tr.Content) < 500 {
+					continue // Skip small tool results.
+				}
+				historyText.WriteString(fmt.Sprintf("\n--- Message %d, Type: tool, Tool Call %s ---\n", i, tr.ToolCallID))
+				historyText.WriteString(fmt.Sprintf("Tool: %s\n", tr.Name))
+				historyText.WriteString(fmt.Sprintf("Content length: %d chars\n", len(tr.Content)))
+				// Include first 500 chars as preview.
+				preview := tr.Content
+				if len(preview) > 500 {
+					preview = preview[:500] + "..."
+				}
+				historyText.WriteString(fmt.Sprintf("Preview:\n%s\n", preview))
 			}
-			historyText.WriteString(fmt.Sprintf("\n--- Message %d, Tool Call %s ---\n", i, tr.ToolCallID))
-			historyText.WriteString(fmt.Sprintf("Tool: %s\n", tr.Name))
-			historyText.WriteString(fmt.Sprintf("Content length: %d chars\n", len(tr.Content)))
+		case message.User:
+			content := msg.Content().Text
+			if len(content) < 500 {
+				continue // Skip small user messages.
+			}
+			historyText.WriteString(fmt.Sprintf("\n--- Message %d, Type: user ---\n", i))
+			historyText.WriteString(fmt.Sprintf("Content length: %d chars\n", len(content)))
 			// Include first 500 chars as preview.
-			preview := tr.Content
+			preview := content
 			if len(preview) > 500 {
 				preview = preview[:500] + "..."
 			}
@@ -1042,7 +1055,7 @@ func (c *coordinator) TidyContext(ctx context.Context, sessionID, instructions s
 	}
 
 	if historyText.Len() == 0 {
-		slog.Debug("No large tool results to tidy")
+		slog.Debug("No large content to tidy")
 		return nil
 	}
 
@@ -1087,18 +1100,28 @@ func (c *coordinator) TidyContext(ctx context.Context, sessionID, instructions s
 			continue
 		}
 		msg := &msgs[comp.MessageIndex]
-		if msg.Role != message.Tool {
+
+		switch comp.Type {
+		case "tool":
+			if msg.Role != message.Tool {
+				continue
+			}
+			toolResults := msg.ToolResults()
+			for i, tr := range toolResults {
+				if tr.ToolCallID == comp.ToolCallID {
+					toolResults[i].Content = comp.Summary
+					break
+				}
+			}
+			msg.SetToolResults(toolResults)
+		case "user":
+			if msg.Role != message.User {
+				continue
+			}
+			msg.SetContent(comp.Summary)
+		default:
 			continue
 		}
-
-		toolResults := msg.ToolResults()
-		for i, tr := range toolResults {
-			if tr.ToolCallID == comp.ToolCallID {
-				toolResults[i].Content = comp.Summary
-				break
-			}
-		}
-		msg.SetToolResults(toolResults)
 
 		// Update the message in the database.
 		if err := c.messages.Update(ctx, *msg); err != nil {
@@ -1113,7 +1136,8 @@ func (c *coordinator) TidyContext(ctx context.Context, sessionID, instructions s
 // tidyCompression represents a single compression instruction from the tidy agent.
 type tidyCompression struct {
 	MessageIndex int    `json:"message_index"`
-	ToolCallID   string `json:"tool_call_id"`
+	Type         string `json:"type"` // "tool" or "user"
+	ToolCallID   string `json:"tool_call_id,omitempty"`
 	Summary      string `json:"summary"`
 }
 

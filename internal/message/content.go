@@ -383,6 +383,17 @@ func (m *Message) AddToolCall(tc ToolCall) {
 	m.Parts = append(m.Parts, tc)
 }
 
+func (m *Message) SetContent(text string) {
+	// Replace the existing TextContent part, or add one if none exists.
+	for i, part := range m.Parts {
+		if _, ok := part.(TextContent); ok {
+			m.Parts[i] = TextContent{Text: text}
+			return
+		}
+	}
+	m.Parts = append(m.Parts, TextContent{Text: text})
+}
+
 func (m *Message) SetToolCalls(tc []ToolCall) {
 	// remove any existing tool call part it could have multiple
 	parts := make([]ContentPart, 0)
