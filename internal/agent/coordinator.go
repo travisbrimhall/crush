@@ -15,6 +15,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
@@ -61,6 +63,8 @@ type Coordinator interface {
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
 	TidyContext(ctx context.Context, sessionID, instructions string) error
+	StartTidyLoop(ctx context.Context, sessionID string)
+	StopTidyLoop(sessionID string)
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	TemplateStore() *templates.Store
@@ -83,6 +87,10 @@ type coordinator struct {
 	agents       map[string]SessionAgent
 
 	readyWg errgroup.Group
+
+	// tidyLoops tracks cancel functions for active tidy loops per session.
+	tidyLoops   map[string]context.CancelFunc
+	tidyLoopsMu sync.Mutex
 }
 
 func NewCoordinator(
@@ -112,6 +120,7 @@ func NewCoordinator(
 		templates:   templateStore,
 		metrics:     metricsService,
 		agents:      make(map[string]SessionAgent),
+		tidyLoops:   make(map[string]context.CancelFunc),
 	}
 
 	agentCfg, ok := cfg.Agents[config.AgentCoder]
@@ -1067,6 +1076,7 @@ func (c *coordinator) TidyContext(ctx context.Context, sessionID, instructions s
 
 	// Use the small model for compression.
 	small := c.currentAgent.SmallModel()
+	slog.Info("Tidying context", "model", small.ModelCfg.Model, "provider", small.ModelCfg.Provider)
 	providerCfg, ok := c.cfg.Providers.Get(small.ModelCfg.Provider)
 	if !ok {
 		return errors.New("small model provider not configured")
@@ -1110,6 +1120,7 @@ func (c *coordinator) TidyContext(ctx context.Context, sessionID, instructions s
 			for i, tr := range toolResults {
 				if tr.ToolCallID == comp.ToolCallID {
 					toolResults[i].Content = comp.Summary
+					toolResults[i].Summarized = true
 					break
 				}
 			}
@@ -1119,6 +1130,14 @@ func (c *coordinator) TidyContext(ctx context.Context, sessionID, instructions s
 				continue
 			}
 			msg.SetContent(comp.Summary)
+			// Mark the text content as summarized.
+			for i, part := range msg.Parts {
+				if tc, ok := part.(message.TextContent); ok {
+					tc.Summarized = true
+					msg.Parts[i] = tc
+					break
+				}
+			}
 		default:
 			continue
 		}
@@ -1189,4 +1208,339 @@ func (c *coordinator) refreshApiKeyTemplate(ctx context.Context, providerCfg con
 		return err
 	}
 	return nil
+}
+
+const (
+	tidyLoopInterval   = 30 * time.Second
+	tidyMinMessageAge  = 6   // Messages must be at least this many messages old.
+	tidyMinContentSize = 500 // Minimum content size to consider for tidying.
+)
+
+// StartTidyLoop starts a background goroutine that periodically tidies old
+// bulky messages in the given session.
+func (c *coordinator) StartTidyLoop(ctx context.Context, sessionID string) {
+	c.tidyLoopsMu.Lock()
+	defer c.tidyLoopsMu.Unlock()
+
+	// Stop existing loop for this session if any.
+	if cancel, ok := c.tidyLoops[sessionID]; ok {
+		cancel()
+	}
+
+	loopCtx, cancel := context.WithCancel(ctx)
+	c.tidyLoops[sessionID] = cancel
+
+	go c.runTidyLoop(loopCtx, sessionID)
+	slog.Debug("Started tidy loop", "session", sessionID)
+}
+
+// StopTidyLoop stops the background tidy loop for the given session.
+func (c *coordinator) StopTidyLoop(sessionID string) {
+	c.tidyLoopsMu.Lock()
+	defer c.tidyLoopsMu.Unlock()
+
+	if cancel, ok := c.tidyLoops[sessionID]; ok {
+		cancel()
+		delete(c.tidyLoops, sessionID)
+		slog.Debug("Stopped tidy loop", "session", sessionID)
+	}
+}
+
+func (c *coordinator) runTidyLoop(ctx context.Context, sessionID string) {
+	ticker := time.NewTicker(tidyLoopInterval)
+	defer ticker.Stop()
+
+	var lastMessageCount int
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			msgs, err := c.messages.List(ctx, sessionID)
+			if err != nil {
+				slog.Warn("Tidy loop: failed to list messages", "error", err)
+				continue
+			}
+
+			// Skip if no new messages since last check.
+			if len(msgs) == lastMessageCount {
+				continue
+			}
+			lastMessageCount = len(msgs)
+
+			// Find bulky unsummarized messages that are old enough.
+			candidates := c.findTidyCandidates(msgs)
+			if len(candidates) == 0 {
+				continue
+			}
+
+			slog.Debug("Tidy loop: found candidates", "count", len(candidates), "session", sessionID)
+
+			// Run tidy on candidates (reuse TidyContext logic but filter to candidates).
+			if err := c.tidyCandidates(ctx, sessionID, msgs, candidates); err != nil {
+				slog.Warn("Tidy loop: failed to tidy candidates", "error", err)
+			}
+		}
+	}
+}
+
+// tidyCandidate represents a message/content pair that should be tidied.
+type tidyCandidate struct {
+	MessageIndex int
+	Type         string // "tool" or "user"
+	ToolCallID   string // Only for tool type.
+}
+
+// findTidyCandidates finds messages that are old, bulky, and not yet summarized.
+func (c *coordinator) findTidyCandidates(msgs []message.Message) []tidyCandidate {
+	var candidates []tidyCandidate
+
+	totalMessages := len(msgs)
+
+	for i, msg := range msgs {
+		// Must be old enough (6+ messages from the end).
+		if totalMessages-i < tidyMinMessageAge {
+			break // Remaining messages are too recent.
+		}
+
+		switch msg.Role {
+		case message.Tool:
+			for _, tr := range msg.ToolResults() {
+				if tr.Summarized {
+					continue
+				}
+				if isBulkyContent(tr.Content) {
+					candidates = append(candidates, tidyCandidate{
+						MessageIndex: i,
+						Type:         "tool",
+						ToolCallID:   tr.ToolCallID,
+					})
+				}
+			}
+		case message.User:
+			content := msg.Content()
+			if content.Summarized {
+				continue
+			}
+			if isBulkyContent(content.Text) {
+				candidates = append(candidates, tidyCandidate{
+					MessageIndex: i,
+					Type:         "user",
+				})
+			}
+		}
+	}
+
+	return candidates
+}
+
+// isBulkyContent determines if content is large or noisy enough to warrant tidying.
+func isBulkyContent(content string) bool {
+	if len(content) < tidyMinContentSize {
+		return false
+	}
+
+	// Large content is always bulky.
+	if len(content) > 2000 {
+		return true
+	}
+
+	// Check for noisy patterns.
+	return isNoisyContent(content)
+}
+
+// isNoisyContent checks for patterns that indicate noisy content.
+func isNoisyContent(content string) bool {
+	// High ratio of hex characters suggests hashes/IDs.
+	hexCount := 0
+	for _, r := range content {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			hexCount++
+		}
+	}
+	if float64(hexCount)/float64(len(content)) > 0.4 {
+		return true
+	}
+
+	// Many URLs.
+	urlCount := strings.Count(content, "http://") + strings.Count(content, "https://")
+	if urlCount > 5 {
+		return true
+	}
+
+	// Many repeated lines (log output, etc.).
+	lines := strings.Split(content, "\n")
+	if len(lines) > 20 {
+		lineCounts := make(map[string]int)
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if len(trimmed) > 10 {
+				lineCounts[trimmed]++
+			}
+		}
+		for _, count := range lineCounts {
+			if count > 5 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// tidyCandidates runs the tidy agent on specific candidates.
+func (c *coordinator) tidyCandidates(ctx context.Context, sessionID string, msgs []message.Message, candidates []tidyCandidate) error {
+	// Build context for the tidy prompt with only the candidates.
+	var historyText strings.Builder
+	for _, cand := range candidates {
+		msg := msgs[cand.MessageIndex]
+		switch cand.Type {
+		case "tool":
+			for _, tr := range msg.ToolResults() {
+				if tr.ToolCallID != cand.ToolCallID {
+					continue
+				}
+				historyText.WriteString(fmt.Sprintf("\n--- Message %d, Type: tool, Tool Call %s ---\n", cand.MessageIndex, tr.ToolCallID))
+				historyText.WriteString(fmt.Sprintf("Tool: %s\n", tr.Name))
+				historyText.WriteString(fmt.Sprintf("Content length: %d chars\n", len(tr.Content)))
+				preview := tr.Content
+				if len(preview) > 500 {
+					preview = preview[:500] + "..."
+				}
+				historyText.WriteString(fmt.Sprintf("Preview:\n%s\n", preview))
+			}
+		case "user":
+			content := msg.Content().Text
+			historyText.WriteString(fmt.Sprintf("\n--- Message %d, Type: user ---\n", cand.MessageIndex))
+			historyText.WriteString(fmt.Sprintf("Content length: %d chars\n", len(content)))
+			preview := content
+			if len(preview) > 500 {
+				preview = preview[:500] + "..."
+			}
+			historyText.WriteString(fmt.Sprintf("Preview:\n%s\n", preview))
+		}
+	}
+
+	if historyText.Len() == 0 {
+		return nil
+	}
+
+	// Build the tidy prompt.
+	tidyPromptText, err := tidyPrompt("")
+	if err != nil {
+		return fmt.Errorf("failed to build tidy prompt: %w", err)
+	}
+
+	// Use the small model for compression.
+	small := c.currentAgent.SmallModel()
+	slog.Info("Background tidy", "model", small.ModelCfg.Model, "candidates", len(candidates))
+	providerCfg, ok := c.cfg.Providers.Get(small.ModelCfg.Provider)
+	if !ok {
+		return errors.New("small model provider not configured")
+	}
+
+	tidyCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	agent := fantasy.NewAgent(small.Model, fantasy.WithSystemPrompt(tidyPromptText))
+	result, err := agent.Generate(tidyCtx, fantasy.AgentCall{
+		Prompt:          historyText.String(),
+		ProviderOptions: getProviderOptions(small, providerCfg),
+	})
+	if err != nil {
+		return fmt.Errorf("tidy agent failed: %w", err)
+	}
+
+	// Parse the response.
+	responseText := result.Response.Content.Text()
+	compressions, err := parseTidyResponse(responseText)
+	if err != nil {
+		slog.Warn("Background tidy: failed to parse response", "error", err)
+		return nil
+	}
+
+	if len(compressions) == 0 {
+		// Mark candidates as summarized even if agent found nothing to compress.
+		// This prevents re-checking them every loop.
+		c.markCandidatesSummarized(ctx, msgs, candidates)
+		return nil
+	}
+
+	// Apply compressions and mark as summarized.
+	for _, comp := range compressions {
+		if comp.MessageIndex < 0 || comp.MessageIndex >= len(msgs) {
+			continue
+		}
+		msg := &msgs[comp.MessageIndex]
+
+		switch comp.Type {
+		case "tool":
+			if msg.Role != message.Tool {
+				continue
+			}
+			toolResults := msg.ToolResults()
+			for i, tr := range toolResults {
+				if tr.ToolCallID == comp.ToolCallID {
+					toolResults[i].Content = comp.Summary
+					toolResults[i].Summarized = true
+					break
+				}
+			}
+			msg.SetToolResults(toolResults)
+		case "user":
+			if msg.Role != message.User {
+				continue
+			}
+			msg.SetContent(comp.Summary)
+			// Mark the text content as summarized.
+			for i, part := range msg.Parts {
+				if tc, ok := part.(message.TextContent); ok {
+					tc.Summarized = true
+					msg.Parts[i] = tc
+					break
+				}
+			}
+		default:
+			continue
+		}
+
+		if err := c.messages.Update(ctx, *msg); err != nil {
+			slog.Warn("Background tidy: failed to update message", "error", err, "message_id", msg.ID)
+		}
+	}
+
+	slog.Info("Background tidy complete", "compressions", len(compressions), "session", sessionID)
+	return nil
+}
+
+// markCandidatesSummarized marks candidates as summarized without changing content.
+func (c *coordinator) markCandidatesSummarized(ctx context.Context, msgs []message.Message, candidates []tidyCandidate) {
+	for _, cand := range candidates {
+		msg := &msgs[cand.MessageIndex]
+
+		switch cand.Type {
+		case "tool":
+			toolResults := msg.ToolResults()
+			for i, tr := range toolResults {
+				if tr.ToolCallID == cand.ToolCallID {
+					toolResults[i].Summarized = true
+					break
+				}
+			}
+			msg.SetToolResults(toolResults)
+		case "user":
+			for i, part := range msg.Parts {
+				if tc, ok := part.(message.TextContent); ok {
+					tc.Summarized = true
+					msg.Parts[i] = tc
+					break
+				}
+			}
+		}
+
+		if err := c.messages.Update(ctx, *msg); err != nil {
+			slog.Warn("Background tidy: failed to mark summarized", "error", err, "message_id", msg.ID)
+		}
+	}
 }

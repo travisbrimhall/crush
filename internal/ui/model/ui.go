@@ -405,8 +405,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.isCompact = true
 		}
 		m.setState(uiChat, m.focus)
+		// Stop tidy loop for previous session if any.
+		if m.session != nil {
+			m.com.App.AgentCoordinator.StopTidyLoop(m.session.ID)
+		}
 		m.session = msg.session
 		m.sessionFiles = msg.files
+		// Start background tidy loop for this session.
+		m.com.App.AgentCoordinator.StartTidyLoop(context.Background(), m.session.ID)
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		msgs, err := m.com.App.Messages.List(context.Background(), m.session.ID)
 		if err != nil {
@@ -1204,7 +1210,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		cmds = append(cmds, func() tea.Msg {
-			err := m.com.App.AgentCoordinator.TidyContext(context.Background(), msg.SessionID, msg.Instructions)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			err := m.com.App.AgentCoordinator.TidyContext(ctx, msg.SessionID, msg.Instructions)
 			if err != nil {
 				return util.ReportError(err)()
 			}
@@ -3021,6 +3029,9 @@ func (m *UI) newSession() tea.Cmd {
 		return nil
 	}
 
+	// Stop tidy loop for current session.
+	m.com.App.AgentCoordinator.StopTidyLoop(m.session.ID)
+
 	m.session = nil
 	m.sessionFiles = nil
 	m.sessionFileReads = nil
@@ -3046,6 +3057,10 @@ func (m *UI) newSession() tea.Cmd {
 // newSessionWithTemplate clears current session and sets a pending template.
 // The template ID will be used when the session is created on first message.
 func (m *UI) newSessionWithTemplate(tmpl *templates.Template) tea.Cmd {
+	// Stop tidy loop for current session if any.
+	if m.session != nil {
+		m.com.App.AgentCoordinator.StopTidyLoop(m.session.ID)
+	}
 	m.session = nil
 	m.sessionFiles = nil
 	m.sessionFileReads = nil

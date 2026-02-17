@@ -58,7 +58,8 @@ func (tc ReasoningContent) String() string {
 func (ReasoningContent) isPart() {}
 
 type TextContent struct {
-	Text string `json:"text"`
+	Text       string `json:"text"`
+	Summarized bool   `json:"summarized,omitempty"`
 }
 
 func (tc TextContent) String() string {
@@ -112,6 +113,7 @@ type ToolResult struct {
 	MIMEType   string `json:"mime_type"`
 	Metadata   string `json:"metadata"`
 	IsError    bool   `json:"is_error"`
+	Summarized bool   `json:"summarized,omitempty"`
 }
 
 func (ToolResult) isPart() {}
