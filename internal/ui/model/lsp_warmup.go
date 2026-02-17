@@ -37,7 +37,9 @@ type lspWarmup struct {
 //   - ./src/main.rs
 //   - /absolute/path/file.ts
 //   - cmd/app/main.go:42 (with line numbers)
-var filePathPattern = regexp.MustCompile(`(?:^|[\s"'\(])([./]?(?:[\w.-]+/)+[\w.-]+\.\w+)(?::\d+)?`)
+//   - agent.go (single file with extension)
+//   - Makefile, Dockerfile, etc. (common extensionless files)
+var filePathPattern = regexp.MustCompile(`(?:^|[\s"'\(])([./]?(?:[\w.-]+/)*[\w.-]+\.\w+|(?:Makefile|Dockerfile|Taskfile|Vagrantfile|Procfile|Gemfile|Rakefile|Justfile))(?::\d+)?`)
 
 func newLSPWarmup(manager *lsp.Manager, workingDir string) *lspWarmup {
 	return &lspWarmup{
