@@ -36,6 +36,7 @@ import (
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
 	"github.com/charmbracelet/crush/internal/summary"
+	"github.com/charmbracelet/crush/internal/templates"
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/update"
@@ -61,6 +62,7 @@ type App struct {
 	Memory      memory.MemoryStore
 	Summaries   *summary.Store
 	Metrics     metrics.Service
+	Templates   *templates.Store
 
 	AgentCoordinator agent.Coordinator
 
@@ -124,6 +126,9 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		serviceEventsWG: &sync.WaitGroup{},
 		tuiWG:           &sync.WaitGroup{},
 	}
+
+	// Initialize template store after app is created (needs templatePaths method).
+	app.Templates = templates.NewStore(app.templatePaths(), memoryStore)
 
 	app.setupEvents()
 
@@ -523,7 +528,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.Memory,
 		app.Summaries,
 		app.Metrics,
-		app.templatePaths(),
+		app.Templates,
 	)
 	if err != nil {
 		slog.Error("Failed to create coder agent", "err", err)

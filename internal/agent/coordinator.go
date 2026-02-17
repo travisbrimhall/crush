@@ -96,14 +96,8 @@ func NewCoordinator(
 	memoryStore memory.MemoryStore,
 	summaryStore *summary.Store,
 	metricsService metrics.Service,
-	templatePaths []string,
+	templateStore *templates.Store,
 ) (Coordinator, error) {
-	// Create template store if paths provided.
-	var templateStore *templates.Store
-	if len(templatePaths) > 0 {
-		templateStore = templates.NewStore(templatePaths, memoryStore)
-	}
-
 	c := &coordinator{
 		cfg:         cfg,
 		sessions:    sessions,

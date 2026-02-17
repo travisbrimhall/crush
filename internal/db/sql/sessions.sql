@@ -3,6 +3,7 @@ INSERT INTO sessions (
     id,
     parent_session_id,
     title,
+    template_id,
     message_count,
     prompt_tokens,
     completion_tokens,
@@ -11,6 +12,7 @@ INSERT INTO sessions (
     updated_at,
     created_at
 ) VALUES (
+    ?,
     ?,
     ?,
     ?,

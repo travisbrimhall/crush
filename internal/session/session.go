@@ -42,6 +42,7 @@ type Session struct {
 	ID               string
 	ParentSessionID  string
 	Title            string
+	TemplateID       string
 	MessageCount     int64
 	PromptTokens     int64
 	CompletionTokens int64
@@ -54,7 +55,7 @@ type Session struct {
 
 type Service interface {
 	pubsub.Subscriber[Session]
-	Create(ctx context.Context, title string) (Session, error)
+	Create(ctx context.Context, title, templateID string) (Session, error)
 	CreateTitleSession(ctx context.Context, parentSessionID string) (Session, error)
 	CreateTaskSession(ctx context.Context, toolCallID, parentSessionID, title string) (Session, error)
 	Get(ctx context.Context, id string) (Session, error)
@@ -75,10 +76,11 @@ type service struct {
 	q  *db.Queries
 }
 
-func (s *service) Create(ctx context.Context, title string) (Session, error) {
+func (s *service) Create(ctx context.Context, title, templateID string) (Session, error) {
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
-		ID:    uuid.New().String(),
-		Title: title,
+		ID:         uuid.New().String(),
+		Title:      title,
+		TemplateID: sql.NullString{String: templateID, Valid: templateID != ""},
 	})
 	if err != nil {
 		return Session{}, err
@@ -219,6 +221,7 @@ func (s service) fromDBItem(item db.Session) Session {
 		ID:               item.ID,
 		ParentSessionID:  item.ParentSessionID.String,
 		Title:            item.Title,
+		TemplateID:       item.TemplateID.String,
 		MessageCount:     item.MessageCount,
 		PromptTokens:     item.PromptTokens,
 		CompletionTokens: item.CompletionTokens,

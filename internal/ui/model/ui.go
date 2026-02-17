@@ -36,6 +36,7 @@ import (
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/templates"
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/attachments"
 	"github.com/charmbracelet/crush/internal/ui/chat"
@@ -223,6 +224,9 @@ type UI struct {
 	// Todo spinner
 	todoSpinner    spinner.Model
 	todoIsSpinning bool
+
+	// Pending template for new session
+	pendingTemplateID string
 
 	// mouse highlighting related state
 	lastClickTime time.Time
@@ -1146,6 +1150,18 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionSelectSession:
 		m.dialog.CloseDialog(dialog.SessionsID)
 		cmds = append(cmds, m.loadSession(msg.Session.ID))
+
+	// Template dialog messages
+	case dialog.ActionSelectTemplate:
+		m.dialog.CloseDialog(dialog.TemplatesID)
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
+			break
+		}
+		// Clear current session and set pending template.
+		if cmd := m.newSessionWithTemplate(msg.Template); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	// Open dialog message
 	case dialog.ActionOpenDialog:
@@ -2681,10 +2697,11 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	var cmds []tea.Cmd
 	if !m.hasSession() {
-		newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session")
+		newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session", m.pendingTemplateID)
 		if err != nil {
 			return util.ReportError(err)
 		}
+		m.pendingTemplateID = "" // Clear after use.
 		if m.forceCompactMode {
 			m.isCompact = true
 		}
@@ -2793,6 +2810,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		}
 	case dialog.ContextID:
 		if cmd := m.openContextDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case dialog.TemplatesID:
+		if cmd := m.openTemplatesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	default:
@@ -2920,6 +2941,18 @@ func (m *UI) openSessionsDialog() tea.Cmd {
 	return nil
 }
 
+// openTemplatesDialog opens the template selector dialog.
+func (m *UI) openTemplatesDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.TemplatesID) {
+		m.dialog.BringToFront(dialog.TemplatesID)
+		return nil
+	}
+
+	templatesDialog := dialog.NewTemplates(m.com, m.com.App.Templates)
+	m.dialog.OpenDialog(templatesDialog)
+	return nil
+}
+
 // openFilesDialog opens the file picker dialog.
 func (m *UI) openFilesDialog() tea.Cmd {
 	if m.dialog.ContainsDialog(dialog.FilePickerID) {
@@ -2978,6 +3011,36 @@ func (m *UI) newSession() tea.Cmd {
 	m.session = nil
 	m.sessionFiles = nil
 	m.sessionFileReads = nil
+	m.pendingTemplateID = ""
+	m.setState(uiLanding, uiFocusEditor)
+	m.textarea.Focus()
+	m.chat.Blur()
+	m.chat.ClearMessages()
+	m.pillsExpanded = false
+	m.promptQueue = 0
+	m.pillsView = ""
+	m.historyReset()
+	agenttools.ResetCache()
+	return tea.Batch(
+		func() tea.Msg {
+			m.com.App.LSPManager.StopAll(context.Background())
+			return nil
+		},
+		m.loadPromptHistory(),
+	)
+}
+
+// newSessionWithTemplate clears current session and sets a pending template.
+// The template ID will be used when the session is created on first message.
+func (m *UI) newSessionWithTemplate(tmpl *templates.Template) tea.Cmd {
+	m.session = nil
+	m.sessionFiles = nil
+	m.sessionFileReads = nil
+	if tmpl != nil {
+		m.pendingTemplateID = tmpl.Name
+	} else {
+		m.pendingTemplateID = ""
+	}
 	m.setState(uiLanding, uiFocusEditor)
 	m.textarea.Focus()
 	m.chat.Blur()

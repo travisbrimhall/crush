@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/templates"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/util"
 )
@@ -32,6 +33,11 @@ type ActionOpenDialog struct {
 // ActionSelectSession is a message indicating a session has been selected.
 type ActionSelectSession struct {
 	Session session.Session
+}
+
+// ActionSelectTemplate is a message indicating a template has been selected for the new session.
+type ActionSelectTemplate struct {
+	Template *templates.Template
 }
 
 // ActionSelectModel is a message indicating a model has been selected.
