@@ -30,7 +30,7 @@ type JobOutputResponseMetadata struct {
 }
 
 func NewJobOutputTool() fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		JobOutputToolName,
 		string(jobOutputDescription),
 		func(ctx context.Context, params JobOutputParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

@@ -28,7 +28,7 @@ func NewRecallTool(store memory.MemoryStore) fantasy.AgentTool {
 	// Check if we have associative capabilities.
 	assocStore, hasAssociative := store.(memory.AssociativeMemoryStore)
 
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		RecallToolName,
 		string(recallDescription),
 		func(ctx context.Context, params RecallParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
