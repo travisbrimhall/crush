@@ -63,7 +63,7 @@ type Coordinator interface {
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
 	TidyContext(ctx context.Context, sessionID, instructions string) error
-	StartTidyLoop(ctx context.Context, sessionID string)
+	StartTidyLoop(ctx context.Context, sessionID string, onTidy func(count int))
 	StopTidyLoop(sessionID string)
 	Model() Model
 	UpdateModels(ctx context.Context) error
@@ -88,9 +88,15 @@ type coordinator struct {
 
 	readyWg errgroup.Group
 
-	// tidyLoops tracks cancel functions for active tidy loops per session.
-	tidyLoops   map[string]context.CancelFunc
+	// tidyLoops tracks active tidy loops per session.
+	tidyLoops   map[string]*tidyLoopState
 	tidyLoopsMu sync.Mutex
+}
+
+// tidyLoopState holds the state for a session's background tidy loop.
+type tidyLoopState struct {
+	cancel context.CancelFunc
+	onTidy func(count int)
 }
 
 func NewCoordinator(
@@ -120,7 +126,7 @@ func NewCoordinator(
 		templates:   templateStore,
 		metrics:     metricsService,
 		agents:      make(map[string]SessionAgent),
-		tidyLoops:   make(map[string]context.CancelFunc),
+		tidyLoops:   make(map[string]*tidyLoopState),
 	}
 
 	agentCfg, ok := cfg.Agents[config.AgentCoder]
@@ -1217,20 +1223,24 @@ const (
 )
 
 // StartTidyLoop starts a background goroutine that periodically tidies old
-// bulky messages in the given session.
-func (c *coordinator) StartTidyLoop(ctx context.Context, sessionID string) {
+// bulky messages in the given session. The onTidy callback is called with the
+// number of messages tidied whenever tidying completes.
+func (c *coordinator) StartTidyLoop(ctx context.Context, sessionID string, onTidy func(count int)) {
 	c.tidyLoopsMu.Lock()
 	defer c.tidyLoopsMu.Unlock()
 
 	// Stop existing loop for this session if any.
-	if cancel, ok := c.tidyLoops[sessionID]; ok {
-		cancel()
+	if state, ok := c.tidyLoops[sessionID]; ok {
+		state.cancel()
 	}
 
 	loopCtx, cancel := context.WithCancel(ctx)
-	c.tidyLoops[sessionID] = cancel
+	c.tidyLoops[sessionID] = &tidyLoopState{
+		cancel: cancel,
+		onTidy: onTidy,
+	}
 
-	go c.runTidyLoop(loopCtx, sessionID)
+	go c.runTidyLoop(loopCtx, sessionID, onTidy)
 	slog.Debug("Started tidy loop", "session", sessionID)
 }
 
@@ -1239,14 +1249,14 @@ func (c *coordinator) StopTidyLoop(sessionID string) {
 	c.tidyLoopsMu.Lock()
 	defer c.tidyLoopsMu.Unlock()
 
-	if cancel, ok := c.tidyLoops[sessionID]; ok {
-		cancel()
+	if state, ok := c.tidyLoops[sessionID]; ok {
+		state.cancel()
 		delete(c.tidyLoops, sessionID)
 		slog.Debug("Stopped tidy loop", "session", sessionID)
 	}
 }
 
-func (c *coordinator) runTidyLoop(ctx context.Context, sessionID string) {
+func (c *coordinator) runTidyLoop(ctx context.Context, sessionID string, onTidy func(count int)) {
 	ticker := time.NewTicker(tidyLoopInterval)
 	defer ticker.Stop()
 
@@ -1278,8 +1288,15 @@ func (c *coordinator) runTidyLoop(ctx context.Context, sessionID string) {
 			slog.Debug("Tidy loop: found candidates", "count", len(candidates), "session", sessionID)
 
 			// Run tidy on candidates (reuse TidyContext logic but filter to candidates).
-			if err := c.tidyCandidates(ctx, sessionID, msgs, candidates); err != nil {
+			count, err := c.tidyCandidates(ctx, sessionID, msgs, candidates)
+			if err != nil {
 				slog.Warn("Tidy loop: failed to tidy candidates", "error", err)
+				continue
+			}
+
+			// Notify UI if any messages were tidied.
+			if count > 0 && onTidy != nil {
+				onTidy(count)
 			}
 		}
 	}
@@ -1390,7 +1407,8 @@ func isNoisyContent(content string) bool {
 }
 
 // tidyCandidates runs the tidy agent on specific candidates.
-func (c *coordinator) tidyCandidates(ctx context.Context, sessionID string, msgs []message.Message, candidates []tidyCandidate) error {
+// Returns the number of messages that were compressed.
+func (c *coordinator) tidyCandidates(ctx context.Context, sessionID string, msgs []message.Message, candidates []tidyCandidate) (int, error) {
 	// Build context for the tidy prompt with only the candidates.
 	var historyText strings.Builder
 	for _, cand := range candidates {
@@ -1423,13 +1441,13 @@ func (c *coordinator) tidyCandidates(ctx context.Context, sessionID string, msgs
 	}
 
 	if historyText.Len() == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// Build the tidy prompt.
 	tidyPromptText, err := tidyPrompt("")
 	if err != nil {
-		return fmt.Errorf("failed to build tidy prompt: %w", err)
+		return 0, fmt.Errorf("failed to build tidy prompt: %w", err)
 	}
 
 	// Use the small model for compression.
@@ -1437,7 +1455,7 @@ func (c *coordinator) tidyCandidates(ctx context.Context, sessionID string, msgs
 	slog.Info("Background tidy", "model", small.ModelCfg.Model, "candidates", len(candidates))
 	providerCfg, ok := c.cfg.Providers.Get(small.ModelCfg.Provider)
 	if !ok {
-		return errors.New("small model provider not configured")
+		return 0, errors.New("small model provider not configured")
 	}
 
 	tidyCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -1449,7 +1467,7 @@ func (c *coordinator) tidyCandidates(ctx context.Context, sessionID string, msgs
 		ProviderOptions: getProviderOptions(small, providerCfg),
 	})
 	if err != nil {
-		return fmt.Errorf("tidy agent failed: %w", err)
+		return 0, fmt.Errorf("tidy agent failed: %w", err)
 	}
 
 	// Parse the response.
@@ -1457,14 +1475,14 @@ func (c *coordinator) tidyCandidates(ctx context.Context, sessionID string, msgs
 	compressions, err := parseTidyResponse(responseText)
 	if err != nil {
 		slog.Warn("Background tidy: failed to parse response", "error", err)
-		return nil
+		return 0, nil
 	}
 
 	if len(compressions) == 0 {
 		// Mark candidates as summarized even if agent found nothing to compress.
 		// This prevents re-checking them every loop.
 		c.markCandidatesSummarized(ctx, msgs, candidates)
-		return nil
+		return 0, nil
 	}
 
 	// Apply compressions and mark as summarized.
@@ -1511,7 +1529,7 @@ func (c *coordinator) tidyCandidates(ctx context.Context, sessionID string, msgs
 	}
 
 	slog.Info("Background tidy complete", "compressions", len(compressions), "session", sessionID)
-	return nil
+	return len(compressions), nil
 }
 
 // markCandidatesSummarized marks candidates as summarized without changing content.

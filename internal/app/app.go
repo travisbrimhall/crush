@@ -53,6 +53,11 @@ type UpdateAvailableMsg struct {
 	IsDevelopment  bool
 }
 
+// TidyCompleteMsg is sent when background tidying completes.
+type TidyCompleteMsg struct {
+	Count int
+}
+
 type App struct {
 	Sessions    session.Service
 	Messages    message.Service
@@ -584,6 +589,16 @@ func (app *App) Subscribe(program *tea.Program) {
 			}
 			program.Send(msg)
 		}
+	}
+}
+
+// SendEvent sends a message to the TUI event loop.
+// This is safe to call from any goroutine.
+func (app *App) SendEvent(msg tea.Msg) {
+	select {
+	case app.events <- msg:
+	default:
+		slog.Warn("Event channel full, dropping message", "type", fmt.Sprintf("%T", msg))
 	}
 }
 

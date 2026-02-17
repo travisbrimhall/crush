@@ -411,8 +411,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.session = msg.session
 		m.sessionFiles = msg.files
-		// Start background tidy loop for this session.
-		m.com.App.AgentCoordinator.StartTidyLoop(context.Background(), m.session.ID)
+		// Start background tidy loop for this session with a callback to notify UI.
+		m.com.App.AgentCoordinator.StartTidyLoop(context.Background(), m.session.ID, func(count int) {
+			m.com.App.SendEvent(app.TidyCompleteMsg{Count: count})
+		})
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		msgs, err := m.com.App.Messages.List(context.Background(), m.session.ID)
 		if err != nil {
@@ -752,6 +754,15 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Warn("Unexpected Kitty graphics response",
 				"response", string(msg.Payload),
 				"options", msg.Options)
+		}
+	case app.TidyCompleteMsg:
+		if msg.Count > 0 {
+			infoMsg := util.InfoMsg{
+				Type: util.InfoTypeSuccess,
+				Msg:  fmt.Sprintf("Tidied %d message(s)", msg.Count),
+			}
+			m.status.SetInfoMsg(infoMsg)
+			cmds = append(cmds, clearInfoMsgCmd(DefaultStatusTTL))
 		}
 	default:
 		if m.dialog.HasDialogs() {
