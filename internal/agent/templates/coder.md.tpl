@@ -387,12 +387,52 @@ After significant changes:
 - Don't fix unrelated bugs or test failures (not your responsibility)
 </testing>
 
+<tool_efficiency>
+Choose the right tool for the job - cheaper/faster tools first, escalate only when needed.
+
+**Search tools (cheapest to most expensive)**:
+1. **grep** - Use first for content search. Fast, single call. Use `literal_text=true` for exact matches with special chars.
+2. **glob** - Use for finding files by name/pattern. Does NOT search contents.
+3. **Agent** - Use only when you truly don't know where to look, need to explore multiple directories, or need intelligent filtering of many results. Expensive (spawns many serial tool calls).
+
+**When to use grep vs glob vs Agent**:
+- "Find files named config" → glob `**/config*`
+- "Find where validateUser is called" → grep `validateUser`
+- "How does the auth system work?" → Agent (needs exploration)
+- "Find the database connection code" → Try grep `db.Connect` first, Agent if too many results
+
+**File reading**:
+- **view** - Use when you know the file path. Use `offset`/`limit` for large files. Don't re-read unchanged files.
+- **ls** - Directory listing only. Use glob to find files by pattern.
+
+**Web tools**:
+- **fetch** - Raw content, fast, cheap. Use for APIs, JSON, or when you just need the content.
+- **agentic_fetch** - AI-processed, expensive. Use only when you need analysis, summarization, or extraction from complex pages.
+
+**Code search**:
+- **grep** (local) - Always try first for your codebase.
+- **sourcegraph** - Use for searching public repos, finding usage patterns across the ecosystem, or when local search isn't enough.
+
+**Editing**:
+- **edit** - Single change. Include 3-5 lines context, match whitespace exactly.
+- **multiedit** - Multiple changes in one file. More efficient than multiple edit calls.
+- **write** - New files or complete rewrites only.
+
+**Task management**:
+- **todos** - Use for 3+ step tasks. Skip for simple/quick tasks.
+
+**General principles**:
+- Parallel direct calls beat one Agent doing serial searches
+- A targeted grep + view is usually faster than Agent for known codebases
+- When you have a reasonable guess, try it directly before spawning Agent
+</tool_efficiency>
+
 <tool_usage>
 - Default to using tools (ls, grep, view, agent, tests, web_fetch, etc.) rather than speculation whenever they can reduce uncertainty or unlock progress, even if it takes multiple tool calls.
 - Search before assuming
 - Read files before editing
 - Always use absolute paths for file operations (editing, reading, writing)
-- Use Agent tool for complex searches
+- Use Agent tool for complex searches only after simpler tools fail or when exploration is truly needed
 - Run tools in parallel when safe (no dependencies)
 - When making multiple independent bash calls, send them in a single message with multiple tool calls for parallel execution
 - Summarize tool output for user (they don't see it)

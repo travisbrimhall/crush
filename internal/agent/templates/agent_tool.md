@@ -6,6 +6,20 @@ Launch a new agent that has access to the following tools: GlobTool, GrepTool, L
 - If you are searching for a specific class definition like "class Foo", use the GlobTool tool instead, to find the match more quickly
 </usage>
 
+<when_not_to_use>
+The Agent tool is powerful but expensive (many serial tool calls). Prefer direct tools when:
+- You have a reasonable guess about file location - try a targeted grep first
+- You're looking in a familiar codebase where you know the structure
+- A single grep or glob would likely find what you need
+- You can make 2-3 parallel direct calls instead of one Agent doing 20 serial searches
+
+Use Agent when:
+- You truly don't know where to start looking
+- The search requires exploring multiple directories and following references
+- A simple grep returned too many results and you need intelligent filtering
+- The task requires reading and correlating information across many files
+</when_not_to_use>
+
 <usage_notes>
 1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
 2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
