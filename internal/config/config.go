@@ -760,6 +760,7 @@ func allToolNames() []string {
 		"read_mcp_resource",
 		"remember",
 		"recall",
+		"mode",
 	}
 }
 

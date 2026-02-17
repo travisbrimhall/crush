@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 )
@@ -13,7 +14,8 @@ type PromptAdapter struct {
 
 // NewPromptAdapter creates a new adapter for prompt building.
 func NewPromptAdapter(store MemoryStore) *PromptAdapter {
-	if store == nil {
+	// Check for nil interface or interface holding nil pointer.
+	if store == nil || reflect.ValueOf(store).IsNil() {
 		return nil
 	}
 	return &PromptAdapter{store: store}

@@ -486,6 +486,14 @@ If a skill mentions scripts, references, or assets, they are placed in the same 
 
 {{.LearnedMemories}}
 {{end}}
+{{if .RecentSummaries}}
+
+{{.RecentSummaries}}
+{{end}}
+{{if .ActiveMode}}
+
+{{.ActiveMode}}
+{{end}}
 
 {{if .ContextFiles}}
 <memory>

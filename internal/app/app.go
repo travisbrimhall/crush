@@ -519,12 +519,31 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.LSPManager,
 		app.Memory,
 		app.Summaries,
+		app.modesPaths(),
 	)
 	if err != nil {
 		slog.Error("Failed to create coder agent", "err", err)
 		return err
 	}
 	return nil
+}
+
+// modesPaths returns paths to search for mode definitions.
+// Uses the same base directories as skills, with "modes" instead of "skills".
+func (app *App) modesPaths() []string {
+	// Derive mode paths from skills paths by replacing "skills" with "modes".
+	skillsPaths := app.config.Options.SkillsPaths
+	if len(skillsPaths) == 0 {
+		skillsPaths = config.GlobalSkillsDirs()
+	}
+
+	var paths []string
+	for _, p := range skillsPaths {
+		// Replace "skills" with "modes" in the path.
+		modePath := strings.Replace(p, "skills", "modes", 1)
+		paths = append(paths, modePath)
+	}
+	return paths
 }
 
 // Subscribe sends events to the TUI as tea.Msgs.

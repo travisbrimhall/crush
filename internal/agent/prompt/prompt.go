@@ -40,6 +40,14 @@ type SummaryEntry struct {
 	Summary   string
 }
 
+// ModeContext holds the active mode information for prompt building.
+type ModeContext struct {
+	Name         string
+	Instructions string
+	ContextDocs  string
+	Memories     string
+}
+
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
 	name          string
@@ -49,6 +57,7 @@ type Prompt struct {
 	workingDir    string
 	memoryReader  MemoryReader
 	summaryReader SummaryReader
+	activeMode    *ModeContext
 }
 
 type PromptDat struct {
@@ -64,6 +73,7 @@ type PromptDat struct {
 	AvailSkillXML    string
 	LearnedMemories  string
 	RecentSummaries  string
+	ActiveMode       string
 }
 
 type ContextFile struct {
@@ -100,6 +110,12 @@ func WithMemoryReader(mr MemoryReader) Option {
 func WithSummaryReader(sr SummaryReader) Option {
 	return func(p *Prompt) {
 		p.summaryReader = sr
+	}
+}
+
+func WithActiveMode(mode *ModeContext) Option {
+	return func(p *Prompt) {
+		p.activeMode = mode
 	}
 }
 
@@ -237,6 +253,12 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		}
 	}
 
+	// Format active mode if set.
+	var activeMode string
+	if p.activeMode != nil {
+		activeMode = formatModeForPrompt(p.activeMode)
+	}
+
 	isGit := isGitRepo(cfg.WorkingDir())
 	data := PromptDat{
 		Provider:        provider,
@@ -249,6 +271,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		AvailSkillXML:   availSkillXML,
 		LearnedMemories: learnedMemories,
 		RecentSummaries: recentSummaries,
+		ActiveMode:      activeMode,
 	}
 	if isGit {
 		var err error
@@ -372,6 +395,38 @@ func formatSummariesForPrompt(entries []SummaryEntry) string {
 	}
 
 	sb.WriteString("</past_sessions>")
+	return sb.String()
+}
+
+// formatModeForPrompt formats the active mode context for inclusion in the prompt.
+func formatModeForPrompt(mode *ModeContext) string {
+	if mode == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<active_mode name=%q>\n", mode.Name))
+	sb.WriteString("You are currently in a specialized mode. Follow these mode-specific instructions.\n\n")
+
+	if mode.Instructions != "" {
+		sb.WriteString("## Mode Instructions\n\n")
+		sb.WriteString(mode.Instructions)
+		sb.WriteString("\n\n")
+	}
+
+	if mode.ContextDocs != "" {
+		sb.WriteString("## Context Documents\n\n")
+		sb.WriteString(mode.ContextDocs)
+		sb.WriteString("\n")
+	}
+
+	if mode.Memories != "" {
+		sb.WriteString("## Relevant Memories\n\n")
+		sb.WriteString(mode.Memories)
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("</active_mode>")
 	return sb.String()
 }
 

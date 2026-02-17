@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"maps"
 	"net/http"
 	"os"
@@ -27,6 +28,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/memory"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/modes"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
@@ -71,6 +73,7 @@ type coordinator struct {
 	lspManager  *lsp.Manager
 	memory      memory.MemoryStore
 	summaries   *summary.Store
+	modes       *modes.Manager
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -89,7 +92,14 @@ func NewCoordinator(
 	lspManager *lsp.Manager,
 	memoryStore memory.MemoryStore,
 	summaryStore *summary.Store,
+	modesPaths []string,
 ) (Coordinator, error) {
+	// Create modes manager if paths provided.
+	var modesManager *modes.Manager
+	if len(modesPaths) > 0 {
+		modesManager = modes.NewManager(modesPaths, memoryStore)
+	}
+
 	c := &coordinator{
 		cfg:         cfg,
 		sessions:    sessions,
@@ -100,6 +110,7 @@ func NewCoordinator(
 		lspManager:  lspManager,
 		memory:      memoryStore,
 		summaries:   summaryStore,
+		modes:       modesManager,
 		agents:      make(map[string]SessionAgent),
 	}
 
@@ -111,7 +122,10 @@ func NewCoordinator(
 	// Build prompt options, including memory reader if available.
 	promptOpts := []prompt.Option{prompt.WithWorkingDir(c.cfg.WorkingDir())}
 	if memoryStore != nil {
-		promptOpts = append(promptOpts, prompt.WithMemoryReader(memory.NewPromptAdapter(memoryStore)))
+		adapter := memory.NewPromptAdapter(memoryStore)
+		if adapter != nil {
+			promptOpts = append(promptOpts, prompt.WithMemoryReader(adapter))
+		}
 	}
 
 	// TODO: make this dynamic when we support multiple agents
@@ -448,12 +462,23 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 	)
 
-	// Add memory tools if memory store is available.
-	if c.memory != nil {
+	// Add memory tools if memory store is available (and not a nil interface).
+	if c.memory != nil && !reflect.ValueOf(c.memory).IsNil() {
 		allTools = append(allTools,
 			tools.NewRememberTool(c.memory),
 			tools.NewRecallTool(c.memory),
 		)
+	}
+
+	// Add mode tool if modes manager is available.
+	if c.modes != nil {
+		modeCallback := func(sessionID string, modeContext string) {
+			// When mode changes, update the system prompt prefix for that session.
+			// For now we use a session-agnostic approach since system prompt is shared.
+			// TODO: make this per-session when we support that.
+			slog.Debug("Mode changed", "session", sessionID, "hasContext", modeContext != "")
+		}
+		allTools = append(allTools, tools.NewModeTool(c.modes, modeCallback))
 	}
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
