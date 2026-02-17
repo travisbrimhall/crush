@@ -49,6 +49,7 @@ type Session struct {
 	CreatedAt        int64          `json:"created_at"`
 	SummaryMessageID sql.NullString `json:"summary_message_id"`
 	Todos            sql.NullString `json:"todos"`
+	TemplateID       sql.NullString `json:"template_id"`
 }
 
 type SessionSummary struct {
@@ -58,4 +59,16 @@ type SessionSummary struct {
 	Embedding   []byte         `json:"embedding"`
 	KeyTopics   sql.NullString `json:"key_topics"`
 	CreatedAt   int64          `json:"created_at"`
+}
+
+type ToolMetric struct {
+	ID           int64          `json:"id"`
+	SessionID    string         `json:"session_id"`
+	ToolName     string         `json:"tool_name"`
+	StartedAt    int64          `json:"started_at"`
+	DurationMs   int64          `json:"duration_ms"`
+	Success      int64          `json:"success"`
+	ErrorMessage sql.NullString `json:"error_message"`
+	InputSize    sql.NullInt64  `json:"input_size"`
+	OutputSize   sql.NullInt64  `json:"output_size"`
 }

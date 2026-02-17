@@ -30,6 +30,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/memory"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/metrics"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
@@ -59,6 +60,7 @@ type App struct {
 	FileTracker filetracker.Service
 	Memory      memory.MemoryStore
 	Summaries   *summary.Store
+	Metrics     metrics.Service
 
 	AgentCoordinator agent.Coordinator
 
@@ -111,6 +113,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		FileTracker: filetracker.NewService(q),
 		Memory:      memoryStore,
 		Summaries:   summaryStore,
+		Metrics:     metrics.New(q),
 		LSPManager:  lsp.NewManager(cfg),
 
 		globalCtx: ctx,
@@ -245,7 +248,7 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	}
 	title := titlePrefix + titleSuffix
 
-	sess, err := app.Sessions.Create(ctx, title)
+	sess, err := app.Sessions.Create(ctx, title, "")
 	if err != nil {
 		return fmt.Errorf("failed to create session for non-interactive mode: %w", err)
 	}
@@ -519,6 +522,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.LSPManager,
 		app.Memory,
 		app.Summaries,
+		app.Metrics,
 		app.templatePaths(),
 	)
 	if err != nil {

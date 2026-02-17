@@ -57,6 +57,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteSessionSummaryStmt, err = db.PrepareContext(ctx, deleteSessionSummary); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSessionSummary: %w", err)
 	}
+	if q.deleteSessionToolMetricsStmt, err = db.PrepareContext(ctx, deleteSessionToolMetrics); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteSessionToolMetrics: %w", err)
+	}
+	if q.getAllToolMetricsSummaryStmt, err = db.PrepareContext(ctx, getAllToolMetricsSummary); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAllToolMetricsSummary: %w", err)
+	}
 	if q.getAverageResponseTimeStmt, err = db.PrepareContext(ctx, getAverageResponseTime); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAverageResponseTime: %w", err)
 	}
@@ -86,6 +92,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getSessionSummaryBySessionIDStmt, err = db.PrepareContext(ctx, getSessionSummaryBySessionID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSessionSummaryBySessionID: %w", err)
+	}
+	if q.getSessionToolMetricsStmt, err = db.PrepareContext(ctx, getSessionToolMetrics); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSessionToolMetrics: %w", err)
+	}
+	if q.getSlowestToolsStmt, err = db.PrepareContext(ctx, getSlowestTools); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSlowestTools: %w", err)
+	}
+	if q.getToolMetricsSummaryStmt, err = db.PrepareContext(ctx, getToolMetricsSummary); err != nil {
+		return nil, fmt.Errorf("error preparing query GetToolMetricsSummary: %w", err)
 	}
 	if q.getToolUsageStmt, err = db.PrepareContext(ctx, getToolUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query GetToolUsage: %w", err)
@@ -140,6 +155,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.recordFileReadStmt, err = db.PrepareContext(ctx, recordFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query RecordFileRead: %w", err)
+	}
+	if q.recordToolMetricStmt, err = db.PrepareContext(ctx, recordToolMetric); err != nil {
+		return nil, fmt.Errorf("error preparing query RecordToolMetric: %w", err)
 	}
 	if q.updateMessageStmt, err = db.PrepareContext(ctx, updateMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateMessage: %w", err)
@@ -213,6 +231,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteSessionSummaryStmt: %w", cerr)
 		}
 	}
+	if q.deleteSessionToolMetricsStmt != nil {
+		if cerr := q.deleteSessionToolMetricsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteSessionToolMetricsStmt: %w", cerr)
+		}
+	}
+	if q.getAllToolMetricsSummaryStmt != nil {
+		if cerr := q.getAllToolMetricsSummaryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAllToolMetricsSummaryStmt: %w", cerr)
+		}
+	}
 	if q.getAverageResponseTimeStmt != nil {
 		if cerr := q.getAverageResponseTimeStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAverageResponseTimeStmt: %w", cerr)
@@ -261,6 +289,21 @@ func (q *Queries) Close() error {
 	if q.getSessionSummaryBySessionIDStmt != nil {
 		if cerr := q.getSessionSummaryBySessionIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSessionSummaryBySessionIDStmt: %w", cerr)
+		}
+	}
+	if q.getSessionToolMetricsStmt != nil {
+		if cerr := q.getSessionToolMetricsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSessionToolMetricsStmt: %w", cerr)
+		}
+	}
+	if q.getSlowestToolsStmt != nil {
+		if cerr := q.getSlowestToolsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSlowestToolsStmt: %w", cerr)
+		}
+	}
+	if q.getToolMetricsSummaryStmt != nil {
+		if cerr := q.getToolMetricsSummaryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getToolMetricsSummaryStmt: %w", cerr)
 		}
 	}
 	if q.getToolUsageStmt != nil {
@@ -353,6 +396,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing recordFileReadStmt: %w", cerr)
 		}
 	}
+	if q.recordToolMetricStmt != nil {
+		if cerr := q.recordToolMetricStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing recordToolMetricStmt: %w", cerr)
+		}
+	}
 	if q.updateMessageStmt != nil {
 		if cerr := q.updateMessageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateMessageStmt: %w", cerr)
@@ -423,6 +471,8 @@ type Queries struct {
 	deleteSessionMessagesStmt              *sql.Stmt
 	deleteSessionSummariesBySessionIDStmt  *sql.Stmt
 	deleteSessionSummaryStmt               *sql.Stmt
+	deleteSessionToolMetricsStmt           *sql.Stmt
+	getAllToolMetricsSummaryStmt           *sql.Stmt
 	getAverageResponseTimeStmt             *sql.Stmt
 	getFileStmt                            *sql.Stmt
 	getFileByPathAndSessionStmt            *sql.Stmt
@@ -433,6 +483,9 @@ type Queries struct {
 	getSessionByIDStmt                     *sql.Stmt
 	getSessionSummaryStmt                  *sql.Stmt
 	getSessionSummaryBySessionIDStmt       *sql.Stmt
+	getSessionToolMetricsStmt              *sql.Stmt
+	getSlowestToolsStmt                    *sql.Stmt
+	getToolMetricsSummaryStmt              *sql.Stmt
 	getToolUsageStmt                       *sql.Stmt
 	getTotalStatsStmt                      *sql.Stmt
 	getUsageByDayStmt                      *sql.Stmt
@@ -451,6 +504,7 @@ type Queries struct {
 	listSessionsStmt                       *sql.Stmt
 	listUserMessagesBySessionStmt          *sql.Stmt
 	recordFileReadStmt                     *sql.Stmt
+	recordToolMetricStmt                   *sql.Stmt
 	updateMessageStmt                      *sql.Stmt
 	updateSessionStmt                      *sql.Stmt
 	updateSessionSummaryEmbeddingStmt      *sql.Stmt
@@ -472,6 +526,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteSessionMessagesStmt:              q.deleteSessionMessagesStmt,
 		deleteSessionSummariesBySessionIDStmt:  q.deleteSessionSummariesBySessionIDStmt,
 		deleteSessionSummaryStmt:               q.deleteSessionSummaryStmt,
+		deleteSessionToolMetricsStmt:           q.deleteSessionToolMetricsStmt,
+		getAllToolMetricsSummaryStmt:           q.getAllToolMetricsSummaryStmt,
 		getAverageResponseTimeStmt:             q.getAverageResponseTimeStmt,
 		getFileStmt:                            q.getFileStmt,
 		getFileByPathAndSessionStmt:            q.getFileByPathAndSessionStmt,
@@ -482,6 +538,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getSessionByIDStmt:                     q.getSessionByIDStmt,
 		getSessionSummaryStmt:                  q.getSessionSummaryStmt,
 		getSessionSummaryBySessionIDStmt:       q.getSessionSummaryBySessionIDStmt,
+		getSessionToolMetricsStmt:              q.getSessionToolMetricsStmt,
+		getSlowestToolsStmt:                    q.getSlowestToolsStmt,
+		getToolMetricsSummaryStmt:              q.getToolMetricsSummaryStmt,
 		getToolUsageStmt:                       q.getToolUsageStmt,
 		getTotalStatsStmt:                      q.getTotalStatsStmt,
 		getUsageByDayStmt:                      q.getUsageByDayStmt,
@@ -500,6 +559,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listSessionsStmt:                       q.listSessionsStmt,
 		listUserMessagesBySessionStmt:          q.listUserMessagesBySessionStmt,
 		recordFileReadStmt:                     q.recordFileReadStmt,
+		recordToolMetricStmt:                   q.recordToolMetricStmt,
 		updateMessageStmt:                      q.updateMessageStmt,
 		updateSessionStmt:                      q.updateSessionStmt,
 		updateSessionSummaryEmbeddingStmt:      q.updateSessionSummaryEmbeddingStmt,

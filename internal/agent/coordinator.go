@@ -28,6 +28,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/memory"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/metrics"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
@@ -75,6 +76,7 @@ type coordinator struct {
 	memory      memory.MemoryStore
 	summaries   *summary.Store
 	templates   *templates.Store
+	metrics     metrics.Service
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -93,6 +95,7 @@ func NewCoordinator(
 	lspManager *lsp.Manager,
 	memoryStore memory.MemoryStore,
 	summaryStore *summary.Store,
+	metricsService metrics.Service,
 	templatePaths []string,
 ) (Coordinator, error) {
 	// Create template store if paths provided.
@@ -112,6 +115,7 @@ func NewCoordinator(
 		memory:      memoryStore,
 		summaries:   summaryStore,
 		templates:   templateStore,
+		metrics:     metricsService,
 		agents:      make(map[string]SessionAgent),
 	}
 
@@ -523,6 +527,14 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
+
+	// Wrap tools with metrics if service is available.
+	if c.metrics != nil {
+		for i, tool := range filteredTools {
+			filteredTools[i] = c.metrics.WrapTool(tool)
+		}
+	}
+
 	return filteredTools, nil
 }
 

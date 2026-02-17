@@ -20,6 +20,8 @@ type Querier interface {
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteSessionSummariesBySessionID(ctx context.Context, sessionID string) error
 	DeleteSessionSummary(ctx context.Context, id string) error
+	DeleteSessionToolMetrics(ctx context.Context, sessionID string) error
+	GetAllToolMetricsSummary(ctx context.Context) ([]GetAllToolMetricsSummaryRow, error)
 	GetAverageResponseTime(ctx context.Context) (int64, error)
 	GetFile(ctx context.Context, id string) (File, error)
 	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
@@ -30,6 +32,9 @@ type Querier interface {
 	GetSessionByID(ctx context.Context, id string) (Session, error)
 	GetSessionSummary(ctx context.Context, id string) (SessionSummary, error)
 	GetSessionSummaryBySessionID(ctx context.Context, sessionID string) (SessionSummary, error)
+	GetSessionToolMetrics(ctx context.Context, sessionID string) ([]ToolMetric, error)
+	GetSlowestTools(ctx context.Context, arg GetSlowestToolsParams) ([]ToolMetric, error)
+	GetToolMetricsSummary(ctx context.Context, sessionID string) ([]GetToolMetricsSummaryRow, error)
 	GetToolUsage(ctx context.Context) ([]GetToolUsageRow, error)
 	GetTotalStats(ctx context.Context) (GetTotalStatsRow, error)
 	GetUsageByDay(ctx context.Context) ([]GetUsageByDayRow, error)
@@ -48,6 +53,7 @@ type Querier interface {
 	ListSessions(ctx context.Context) ([]Session, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	RecordFileRead(ctx context.Context, arg RecordFileReadParams) error
+	RecordToolMetric(ctx context.Context, arg RecordToolMetricParams) error
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionSummaryEmbedding(ctx context.Context, arg UpdateSessionSummaryEmbeddingParams) error
