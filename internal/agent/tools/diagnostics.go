@@ -50,6 +50,14 @@ func notifyLSPs(
 		return
 	}
 
+	// If a batcher is present, register the file for batched notification.
+	// The batcher will handle notification and waiting after all tools complete.
+	if batcher := GetLSPBatcherFromContext(ctx); batcher != nil {
+		batcher.Register(filepath)
+		return
+	}
+
+	// Fallback to immediate notification if no batcher.
 	manager.Start(ctx, filepath)
 
 	for client := range manager.Clients().Seq() {

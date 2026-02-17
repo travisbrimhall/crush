@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+
+	"github.com/charmbracelet/crush/internal/lsp"
 )
 
 type (
@@ -9,6 +11,7 @@ type (
 	messageIDContextKey string
 	supportsImagesKey   string
 	modelNameKey        string
+	lspBatcherKey       string
 )
 
 const (
@@ -20,6 +23,8 @@ const (
 	SupportsImagesContextKey supportsImagesKey = "supports_images"
 	// ModelNameContextKey is the key for the model name in the context.
 	ModelNameContextKey modelNameKey = "model_name"
+	// LSPBatcherContextKey is the key for the LSP batcher in the context.
+	LSPBatcherContextKey lspBatcherKey = "lsp_batcher"
 )
 
 // GetSessionFromContext retrieves the session ID from the context.
@@ -71,4 +76,22 @@ func GetModelNameFromContext(ctx context.Context) string {
 		return ""
 	}
 	return s
+}
+
+// GetLSPBatcherFromContext retrieves the LSP batcher from the context.
+func GetLSPBatcherFromContext(ctx context.Context) *lsp.Batcher {
+	batcher := ctx.Value(LSPBatcherContextKey)
+	if batcher == nil {
+		return nil
+	}
+	b, ok := batcher.(*lsp.Batcher)
+	if !ok {
+		return nil
+	}
+	return b
+}
+
+// WithLSPBatcher adds an LSP batcher to the context.
+func WithLSPBatcher(ctx context.Context, batcher *lsp.Batcher) context.Context {
+	return context.WithValue(ctx, LSPBatcherContextKey, batcher)
 }
