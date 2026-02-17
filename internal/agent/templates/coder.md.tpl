@@ -253,9 +253,10 @@ When using edit tools:
 - Match line endings exactly
 - When in doubt, include MORE context rather than less
 
-Efficiency tips:
-- Don't re-read files after successful edits (tool will fail if it didn't work)
-- Same applies for making folders, deleting files, etc.
+Efficiency rules:
+- **NEVER re-read a file you just successfully edited** - the edit tool confirms success. Re-reading wastes a round-trip.
+- **NEVER re-read a file you already read this session** unless you have reason to believe it changed externally.
+- Same applies for verifying folder creation, file deletion, etc. - trust the tool's success response.
 
 Common mistakes to avoid:
 - Editing without reading first
@@ -425,6 +426,12 @@ Choose the right tool for the job - cheaper/faster tools first, escalate only wh
 - Parallel direct calls beat one Agent doing serial searches
 - A targeted grep + view is usually faster than Agent for known codebases
 - When you have a reasonable guess, try it directly before spawning Agent
+
+**Parallelization** - Run these together in one message when independent:
+- Safe to parallelize: multiple `grep`, multiple `glob`, multiple `view`, multiple `ls`, `grep` + `glob`, `view` + `view`, multiple `fetch`, multiple `bash` (read-only)
+- Safe to parallelize: multiple `Agent` calls for different search tasks
+- NOT safe: `edit` then `view` same file (view would see old content), `grep` then `edit` based on results, any chain where output determines next input
+- Rule: If call B doesn't need the result of call A, run them together
 </tool_efficiency>
 
 <tool_usage>
