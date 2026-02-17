@@ -24,7 +24,7 @@ const DiagnosticsToolName = "lsp_diagnostics"
 var diagnosticsDescription []byte
 
 func NewDiagnosticsTool(lspManager *lsp.Manager) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		DiagnosticsToolName,
 		string(diagnosticsDescription),
 		func(ctx context.Context, params DiagnosticsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

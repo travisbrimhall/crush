@@ -34,7 +34,7 @@ const ReferencesToolName = "lsp_references"
 var referencesDescription []byte
 
 func NewReferencesTool(lspManager *lsp.Manager) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		ReferencesToolName,
 		string(referencesDescription),
 		func(ctx context.Context, params ReferencesParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
