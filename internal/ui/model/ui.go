@@ -193,7 +193,6 @@ type UI struct {
 
 	// lsp
 	lspStates map[string]app.LSPClientInfo
-	lspWarmup *lspWarmup
 
 	// mcp
 	mcpStates map[string]mcp.ClientInfo
@@ -211,9 +210,6 @@ type UI struct {
 	// isCompact tracks whether we're currently in compact layout mode (either
 	// by user toggle or auto-switch based on window size)
 	isCompact bool
-
-	// pendingTemplateID is set when user selects a template before starting a session
-	pendingTemplateID string
 
 	// detailsOpen tracks whether the details panel is open (in compact mode)
 	detailsOpen bool
@@ -293,7 +289,6 @@ func New(com *common.Common) *UI {
 		attachments: attachments,
 		todoSpinner: todoSpinner,
 		lspStates:   make(map[string]app.LSPClientInfo),
-		lspWarmup:   newLSPWarmup(com.App.LSPManager, com.Config().WorkingDir()),
 		mcpStates:   make(map[string]mcp.ClientInfo),
 	}
 
@@ -466,9 +461,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ok {
 			commands.SetMCPPrompts(m.mcpPrompts)
 		}
-
-	case lspWarmupMsg:
-		// LSP warmup completed in background, nothing to do here.
 
 	case promptHistoryLoadedMsg:
 		m.promptHistory.messages = msg.messages
@@ -1155,13 +1147,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.dialog.CloseDialog(dialog.SessionsID)
 		cmds = append(cmds, m.loadSession(msg.Session.ID))
 
-	// Template dialog messages
-	case dialog.ActionSelectTemplate:
-		m.dialog.CloseDialog(dialog.TemplatesID)
-		if msg.Template != nil {
-			m.pendingTemplateID = msg.Template.Name
-		}
-
 	// Open dialog message
 	case dialog.ActionOpenDialog:
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -1690,11 +1675,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 				// Any text modification becomes the current draft.
 				m.updateHistoryDraft(curValue)
-
-				// Speculatively warm LSP for file paths detected in input.
-				if warmupCmd := m.lspWarmup.detectAndWarm(m.textarea.Value()); warmupCmd != nil {
-					cmds = append(cmds, warmupCmd)
-				}
 
 				// After updating textarea, check if we need to filter completions.
 				// Skip filtering on the initial @ keystroke since items are loading async.
@@ -2701,11 +2681,10 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	var cmds []tea.Cmd
 	if !m.hasSession() {
-		newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session", m.pendingTemplateID)
+		newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session")
 		if err != nil {
 			return util.ReportError(err)
 		}
-		m.pendingTemplateID = "" // clear after use
 		if m.forceCompactMode {
 			m.isCompact = true
 		}
@@ -2816,10 +2795,6 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openContextDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case dialog.TemplatesID:
-		if cmd := m.openTemplatesDialog(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
 	default:
 		// Unknown dialog
 		break
@@ -2857,23 +2832,6 @@ func (m *UI) openContextDialog() tea.Cmd {
 	}
 
 	m.dialog.OpenDialog(contextDialog)
-	return nil
-}
-
-// openTemplatesDialog opens the template selector dialog.
-func (m *UI) openTemplatesDialog() tea.Cmd {
-	if m.dialog.ContainsDialog(dialog.TemplatesID) {
-		m.dialog.BringToFront(dialog.TemplatesID)
-		return nil
-	}
-
-	store := m.com.App.AgentCoordinator.TemplateStore()
-	if store == nil || len(store.List()) == 0 {
-		return util.ReportWarn("No templates available")
-	}
-
-	templatesDialog := dialog.NewTemplates(m.com, store)
-	m.dialog.OpenDialog(templatesDialog)
 	return nil
 }
 
