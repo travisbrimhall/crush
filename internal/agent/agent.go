@@ -89,7 +89,6 @@ type SessionAgent interface {
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string, fantasy.ProviderOptions) (string, error)
 	Model() Model
-	SmallModel() Model
 }
 
 type Model struct {
@@ -756,9 +755,6 @@ If not, please feel free to ignore. Again do not mention this message to the use
 		history = append(history, m.ToAIMessage()...)
 	}
 
-	// Compress old, large tool results to reduce context size.
-	history = compressOldToolResults(history)
-
 	var files []fantasy.FilePart
 	for _, attachment := range attachments {
 		if attachment.IsText() {
@@ -772,116 +768,6 @@ If not, please feel free to ignore. Again do not mention this message to the use
 	}
 
 	return history, files
-}
-
-const (
-	// compressAfterTurns is the number of turns after which tool results become
-	// eligible for compression.
-	compressAfterTurns = 6
-	// compressMinSize is the minimum size in bytes for a tool result to be
-	// compressed.
-	compressMinSize = 1000
-	// compressKeepLines is the number of lines to keep at the start and end
-	// when compressing large tool output.
-	compressKeepLines = 5
-)
-
-// compressOldToolResults reduces the size of old, large tool results in the
-// message history. Tool results older than compressAfterTurns that exceed
-// compressMinSize are truncated, keeping only the first and last few lines.
-// This reduces context window usage without losing critical information.
-func compressOldToolResults(history []fantasy.Message) []fantasy.Message {
-	if len(history) <= compressAfterTurns*2 {
-		return history // Not enough history to compress.
-	}
-
-	// Find index where "old" messages end (keep recent turns uncompressed).
-	// Each turn is roughly 2 messages (user + assistant/tool).
-	oldMessageCutoff := len(history) - (compressAfterTurns * 2)
-	if oldMessageCutoff < 0 {
-		oldMessageCutoff = 0
-	}
-
-	for i := 0; i < oldMessageCutoff; i++ {
-		msg := &history[i]
-		if msg.Role != fantasy.MessageRoleTool {
-			continue
-		}
-
-		for j, part := range msg.Content {
-			toolResult, ok := part.(fantasy.ToolResultPart)
-			if !ok {
-				continue
-			}
-
-			textContent, ok := toolResult.Output.(fantasy.ToolResultOutputContentText)
-			if !ok {
-				continue
-			}
-
-			if len(textContent.Text) < compressMinSize {
-				continue
-			}
-
-			compressed := compressText(textContent.Text)
-			if compressed == textContent.Text {
-				continue // No compression happened.
-			}
-
-			// Replace with compressed version.
-			toolResult.Output = fantasy.ToolResultOutputContentText{Text: compressed}
-			msg.Content[j] = toolResult
-		}
-	}
-
-	return history
-}
-
-// compressText truncates large text, keeping the first and last few lines with
-// a summary in the middle. Also shortens long hashes and URLs.
-func compressText(text string) string {
-	// First, shorten long hashes and URLs throughout.
-	text = shortenHashes(text)
-	text = shortenURLs(text)
-
-	lines := strings.Split(text, "\n")
-	if len(lines) <= compressKeepLines*2+1 {
-		return text // Not enough lines to compress.
-	}
-
-	head := strings.Join(lines[:compressKeepLines], "\n")
-	tail := strings.Join(lines[len(lines)-compressKeepLines:], "\n")
-	omitted := len(lines) - compressKeepLines*2
-
-	return fmt.Sprintf("%s\n\n[... %d lines omitted for brevity ...]\n\n%s", head, omitted, tail)
-}
-
-// Regex patterns for hashes and URLs.
-var (
-	// Matches hex strings that look like hashes (32+ chars).
-	hashPattern = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
-	// Matches URLs with long paths or query strings.
-	longURLPattern = regexp.MustCompile(`https?://[^\s]{100,}`)
-)
-
-// shortenHashes replaces long hex hashes with truncated versions.
-func shortenHashes(text string) string {
-	return hashPattern.ReplaceAllStringFunc(text, func(hash string) string {
-		if len(hash) <= 16 {
-			return hash
-		}
-		return hash[:8] + "..." + hash[len(hash)-8:]
-	})
-}
-
-// shortenURLs truncates very long URLs.
-func shortenURLs(text string) string {
-	return longURLPattern.ReplaceAllStringFunc(text, func(url string) string {
-		if len(url) <= 120 {
-			return url
-		}
-		return url[:60] + "..." + url[len(url)-40:]
-	})
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {
@@ -1173,10 +1059,6 @@ func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
 
 func (a *sessionAgent) Model() Model {
 	return a.largeModel.Get()
-}
-
-func (a *sessionAgent) SmallModel() Model {
-	return a.smallModel.Get()
 }
 
 // convertToToolResult converts a fantasy tool result to a message tool result.

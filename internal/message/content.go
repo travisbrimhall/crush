@@ -58,8 +58,7 @@ func (tc ReasoningContent) String() string {
 func (ReasoningContent) isPart() {}
 
 type TextContent struct {
-	Text       string `json:"text"`
-	Summarized bool   `json:"summarized,omitempty"`
+	Text string `json:"text"`
 }
 
 func (tc TextContent) String() string {
@@ -113,7 +112,6 @@ type ToolResult struct {
 	MIMEType   string `json:"mime_type"`
 	Metadata   string `json:"metadata"`
 	IsError    bool   `json:"is_error"`
-	Summarized bool   `json:"summarized,omitempty"`
 }
 
 func (ToolResult) isPart() {}
@@ -383,17 +381,6 @@ func (m *Message) AddToolCall(tc ToolCall) {
 		}
 	}
 	m.Parts = append(m.Parts, tc)
-}
-
-func (m *Message) SetContent(text string) {
-	// Replace the existing TextContent part, or add one if none exists.
-	for i, part := range m.Parts {
-		if _, ok := part.(TextContent); ok {
-			m.Parts[i] = TextContent{Text: text}
-			return
-		}
-	}
-	m.Parts = append(m.Parts, TextContent{Text: text})
 }
 
 func (m *Message) SetToolCalls(tc []ToolCall) {

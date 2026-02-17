@@ -405,16 +405,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.isCompact = true
 		}
 		m.setState(uiChat, m.focus)
-		// Stop tidy loop for previous session if any.
-		if m.session != nil {
-			m.com.App.AgentCoordinator.StopTidyLoop(m.session.ID)
-		}
 		m.session = msg.session
 		m.sessionFiles = msg.files
-		// Start background tidy loop for this session with a callback to notify UI.
-		m.com.App.AgentCoordinator.StartTidyLoop(context.Background(), m.session.ID, func(count int) {
-			m.com.App.SendEvent(app.TidyCompleteMsg{Count: count})
-		})
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		msgs, err := m.com.App.Messages.List(context.Background(), m.session.ID)
 		if err != nil {
@@ -754,15 +746,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Warn("Unexpected Kitty graphics response",
 				"response", string(msg.Payload),
 				"options", msg.Options)
-		}
-	case app.TidyCompleteMsg:
-		if msg.Count > 0 {
-			infoMsg := util.InfoMsg{
-				Type: util.InfoTypeSuccess,
-				Msg:  fmt.Sprintf("Tidied %d message(s)", msg.Count),
-			}
-			m.status.SetInfoMsg(infoMsg)
-			cmds = append(cmds, clearInfoMsgCmd(DefaultStatusTTL))
 		}
 	default:
 		if m.dialog.HasDialogs() {
@@ -1213,21 +1196,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				return util.ReportError(err)()
 			}
 			return nil
-		})
-		m.dialog.CloseDialog(dialog.CommandsID)
-	case dialog.ActionTidyContext:
-		if m.isAgentBusy() {
-			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before tidying context..."))
-			break
-		}
-		cmds = append(cmds, func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			err := m.com.App.AgentCoordinator.TidyContext(ctx, msg.SessionID, msg.Instructions)
-			if err != nil {
-				return util.ReportError(err)()
-			}
-			return util.InfoMsg{Type: util.InfoTypeSuccess, Msg: "Context tidied"}
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionDeleteMessage:
@@ -3040,9 +3008,6 @@ func (m *UI) newSession() tea.Cmd {
 		return nil
 	}
 
-	// Stop tidy loop for current session.
-	m.com.App.AgentCoordinator.StopTidyLoop(m.session.ID)
-
 	m.session = nil
 	m.sessionFiles = nil
 	m.sessionFileReads = nil
@@ -3068,10 +3033,6 @@ func (m *UI) newSession() tea.Cmd {
 // newSessionWithTemplate clears current session and sets a pending template.
 // The template ID will be used when the session is created on first message.
 func (m *UI) newSessionWithTemplate(tmpl *templates.Template) tea.Cmd {
-	// Stop tidy loop for current session if any.
-	if m.session != nil {
-		m.com.App.AgentCoordinator.StopTidyLoop(m.session.ID)
-	}
 	m.session = nil
 	m.sessionFiles = nil
 	m.sessionFileReads = nil
