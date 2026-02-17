@@ -519,7 +519,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.LSPManager,
 		app.Memory,
 		app.Summaries,
-		app.modesPaths(),
+		app.templatePaths(),
 	)
 	if err != nil {
 		slog.Error("Failed to create coder agent", "err", err)
@@ -528,10 +528,10 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 	return nil
 }
 
-// modesPaths returns paths to search for mode definitions.
-// Uses the same base directories as skills, with "modes" instead of "skills".
-func (app *App) modesPaths() []string {
-	// Derive mode paths from skills paths by replacing "skills" with "modes".
+// templatePaths returns paths to search for session template definitions.
+// Uses the same base directories as skills, with "templates" instead of "skills".
+func (app *App) templatePaths() []string {
+	// Derive template paths from skills paths by replacing "skills" with "templates".
 	skillsPaths := app.config.Options.SkillsPaths
 	if len(skillsPaths) == 0 {
 		skillsPaths = config.GlobalSkillsDirs()
@@ -539,9 +539,9 @@ func (app *App) modesPaths() []string {
 
 	var paths []string
 	for _, p := range skillsPaths {
-		// Replace "skills" with "modes" in the path.
-		modePath := strings.Replace(p, "skills", "modes", 1)
-		paths = append(paths, modePath)
+		// Replace "skills" with "templates" in the path.
+		tmplPath := strings.Replace(p, "skills", "templates", 1)
+		paths = append(paths, tmplPath)
 	}
 	return paths
 }

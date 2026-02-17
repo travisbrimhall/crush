@@ -490,10 +490,6 @@ If a skill mentions scripts, references, or assets, they are placed in the same 
 
 {{.RecentSummaries}}
 {{end}}
-{{if .ActiveMode}}
-
-{{.ActiveMode}}
-{{end}}
 
 {{if .ContextFiles}}
 <memory>

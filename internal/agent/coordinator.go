@@ -28,7 +28,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/memory"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/charmbracelet/crush/internal/modes"
+	"github.com/charmbracelet/crush/internal/templates"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
@@ -73,7 +73,7 @@ type coordinator struct {
 	lspManager  *lsp.Manager
 	memory      memory.MemoryStore
 	summaries   *summary.Store
-	modes       *modes.Manager
+	templates   *templates.Store
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -92,12 +92,12 @@ func NewCoordinator(
 	lspManager *lsp.Manager,
 	memoryStore memory.MemoryStore,
 	summaryStore *summary.Store,
-	modesPaths []string,
+	templatePaths []string,
 ) (Coordinator, error) {
-	// Create modes manager if paths provided.
-	var modesManager *modes.Manager
-	if len(modesPaths) > 0 {
-		modesManager = modes.NewManager(modesPaths, memoryStore)
+	// Create template store if paths provided.
+	var templateStore *templates.Store
+	if len(templatePaths) > 0 {
+		templateStore = templates.NewStore(templatePaths, memoryStore)
 	}
 
 	c := &coordinator{
@@ -110,7 +110,7 @@ func NewCoordinator(
 		lspManager:  lspManager,
 		memory:      memoryStore,
 		summaries:   summaryStore,
-		modes:       modesManager,
+		templates:   templateStore,
 		agents:      make(map[string]SessionAgent),
 	}
 
@@ -468,17 +468,6 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 			tools.NewRememberTool(c.memory),
 			tools.NewRecallTool(c.memory),
 		)
-	}
-
-	// Add mode tool if modes manager is available.
-	if c.modes != nil {
-		modeCallback := func(sessionID string, modeContext string) {
-			// When mode changes, update the system prompt prefix for that session.
-			// For now we use a session-agnostic approach since system prompt is shared.
-			// TODO: make this per-session when we support that.
-			slog.Debug("Mode changed", "session", sessionID, "hasContext", modeContext != "")
-		}
-		allTools = append(allTools, tools.NewModeTool(c.modes, modeCallback))
 	}
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
