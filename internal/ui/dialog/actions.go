@@ -62,6 +62,11 @@ type (
 	ActionSummarize         struct {
 		SessionID string
 	}
+	// ActionTidyContext is a message to tidy/compress old context in the session.
+	ActionTidyContext struct {
+		SessionID    string
+		Instructions string // Optional user instructions for what to tidy
+	}
 	// ActionSelectReasoningEffort is a message indicating a reasoning effort has been selected.
 	ActionSelectReasoningEffort struct {
 		Effort string

@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	_ "embed"
+	"strings"
+	"text/template"
 
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/config"
@@ -16,6 +18,9 @@ var taskPromptTmpl []byte
 
 //go:embed templates/initialize.md.tpl
 var initializePromptTmpl []byte
+
+//go:embed templates/tidy.md
+var tidyPromptTmpl []byte
 
 func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 	systemPrompt, err := prompt.NewPrompt("coder", string(coderPromptTmpl), opts...)
@@ -39,4 +44,21 @@ func InitializePrompt(cfg config.Config) (string, error) {
 		return "", err
 	}
 	return systemPrompt.Build(context.Background(), "", "", cfg)
+}
+
+func tidyPrompt(instructions string) (string, error) {
+	tmpl, err := template.New("tidy").Parse(string(tidyPromptTmpl))
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	data := struct {
+		Instructions string
+	}{
+		Instructions: instructions,
+	}
+	if err := tmpl.Execute(&sb, data); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }

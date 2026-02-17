@@ -60,6 +60,7 @@ type Coordinator interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
+	TidyContext(ctx context.Context, sessionID, instructions string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	TemplateStore() *templates.Store
@@ -995,6 +996,143 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	}
 
 	return nil
+}
+
+func (c *coordinator) TidyContext(ctx context.Context, sessionID, instructions string) error {
+	// Get session messages.
+	sess, err := c.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+	msgs, err := c.messages.List(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to list messages: %w", err)
+	}
+
+	// Filter to messages after any existing summary.
+	if sess.SummaryMessageID != "" {
+		for i, msg := range msgs {
+			if msg.ID == sess.SummaryMessageID {
+				msgs = msgs[i:]
+				break
+			}
+		}
+	}
+
+	// Build the context for the tidy prompt.
+	var historyText strings.Builder
+	for i, msg := range msgs {
+		if msg.Role != message.Tool {
+			continue
+		}
+		for _, tr := range msg.ToolResults() {
+			if len(tr.Content) < 500 {
+				continue // Skip small tool results.
+			}
+			historyText.WriteString(fmt.Sprintf("\n--- Message %d, Tool Call %s ---\n", i, tr.ToolCallID))
+			historyText.WriteString(fmt.Sprintf("Tool: %s\n", tr.Name))
+			historyText.WriteString(fmt.Sprintf("Content length: %d chars\n", len(tr.Content)))
+			// Include first 500 chars as preview.
+			preview := tr.Content
+			if len(preview) > 500 {
+				preview = preview[:500] + "..."
+			}
+			historyText.WriteString(fmt.Sprintf("Preview:\n%s\n", preview))
+		}
+	}
+
+	if historyText.Len() == 0 {
+		slog.Debug("No large tool results to tidy")
+		return nil
+	}
+
+	// Build the tidy prompt.
+	tidyPromptText, err := tidyPrompt(instructions)
+	if err != nil {
+		return fmt.Errorf("failed to build tidy prompt: %w", err)
+	}
+
+	// Use the small model for compression.
+	small := c.currentAgent.SmallModel()
+	providerCfg, ok := c.cfg.Providers.Get(small.ModelCfg.Provider)
+	if !ok {
+		return errors.New("small model provider not configured")
+	}
+
+	agent := fantasy.NewAgent(small.Model, fantasy.WithSystemPrompt(tidyPromptText))
+	result, err := agent.Generate(ctx, fantasy.AgentCall{
+		Prompt:          historyText.String(),
+		ProviderOptions: getProviderOptions(small, providerCfg),
+	})
+	if err != nil {
+		return fmt.Errorf("tidy agent failed: %w", err)
+	}
+
+	// Parse the response to get compression instructions.
+	responseText := result.Response.Content.Text()
+	compressions, err := parseTidyResponse(responseText)
+	if err != nil {
+		slog.Warn("Failed to parse tidy response", "error", err, "response", responseText)
+		return nil // Non-fatal, just skip tidying.
+	}
+
+	if len(compressions) == 0 {
+		slog.Debug("Tidy agent found nothing to compress")
+		return nil
+	}
+
+	// Apply compressions to messages.
+	for _, comp := range compressions {
+		if comp.MessageIndex < 0 || comp.MessageIndex >= len(msgs) {
+			continue
+		}
+		msg := &msgs[comp.MessageIndex]
+		if msg.Role != message.Tool {
+			continue
+		}
+
+		toolResults := msg.ToolResults()
+		for i, tr := range toolResults {
+			if tr.ToolCallID == comp.ToolCallID {
+				toolResults[i].Content = comp.Summary
+				break
+			}
+		}
+		msg.SetToolResults(toolResults)
+
+		// Update the message in the database.
+		if err := c.messages.Update(ctx, *msg); err != nil {
+			slog.Warn("Failed to update message with tidied content", "error", err, "message_id", msg.ID)
+		}
+	}
+
+	slog.Info("Tidied context", "compressions", len(compressions))
+	return nil
+}
+
+// tidyCompression represents a single compression instruction from the tidy agent.
+type tidyCompression struct {
+	MessageIndex int    `json:"message_index"`
+	ToolCallID   string `json:"tool_call_id"`
+	Summary      string `json:"summary"`
+}
+
+// parseTidyResponse extracts compression instructions from the tidy agent's response.
+func parseTidyResponse(response string) ([]tidyCompression, error) {
+	// Find JSON array in the response.
+	start := strings.Index(response, "[")
+	end := strings.LastIndex(response, "]")
+	if start == -1 || end == -1 || end <= start {
+		return nil, fmt.Errorf("no JSON array found in response")
+	}
+
+	jsonStr := response[start : end+1]
+	var compressions []tidyCompression
+	if err := json.Unmarshal([]byte(jsonStr), &compressions); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	return compressions, nil
 }
 
 func (c *coordinator) isUnauthorized(err error) bool {

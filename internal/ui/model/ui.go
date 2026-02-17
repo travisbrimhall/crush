@@ -1198,6 +1198,19 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return nil
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionTidyContext:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before tidying context..."))
+			break
+		}
+		cmds = append(cmds, func() tea.Msg {
+			err := m.com.App.AgentCoordinator.TidyContext(context.Background(), msg.SessionID, msg.Instructions)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+			return util.InfoMsg{Type: util.InfoTypeSuccess, Msg: "Context tidied"}
+		})
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionDeleteMessage:
 		cmds = append(cmds, func() tea.Msg {
 			err := m.com.App.Messages.Delete(context.Background(), msg.MessageID)
