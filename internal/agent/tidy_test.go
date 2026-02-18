@@ -163,7 +163,7 @@ func TestParseTidyResponse(t *testing.T) {
 
 		compressions, err := ParseTidyResponse(response)
 		require.NoError(t, err)
-		assert.Empty(t, compressions)
+		assert.Len(t, compressions, 0)
 	})
 
 	t.Run("fails on no JSON array", func(t *testing.T) {

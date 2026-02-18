@@ -112,6 +112,21 @@ func (t *TidyManager) Stop(sessionID string) {
 	}
 }
 
+// RunNow immediately runs tidy for a session, bypassing the idle timer.
+func (t *TidyManager) RunNow(ctx context.Context, sessionID string, runTidy func(context.Context) (map[string]string, error)) {
+	t.mu.Lock()
+	// Cancel any pending timer.
+	if sess, ok := t.sessions[sessionID]; ok {
+		sess.timer.Stop()
+		if sess.cancel != nil {
+			sess.cancel()
+		}
+	}
+	t.mu.Unlock()
+
+	t.doTidy(ctx, sessionID, runTidy)
+}
+
 func (t *TidyManager) doTidy(ctx context.Context, sessionID string, runTidy func(context.Context) (map[string]string, error)) {
 	slog.Debug("Running tidy", "session", sessionID)
 
@@ -122,7 +137,6 @@ func (t *TidyManager) doTidy(ctx context.Context, sessionID string, runTidy func
 	}
 
 	if len(compressions) == 0 {
-		slog.Debug("Tidy found nothing to compress", "session", sessionID)
 		return
 	}
 

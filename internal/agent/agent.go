@@ -89,6 +89,7 @@ type SessionAgent interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string, fantasy.ProviderOptions) (string, error)
+	RunTidy(context.Context, string) error
 	Model() Model
 }
 
@@ -126,6 +127,7 @@ type SessionAgentOptions struct {
 	SystemPrompt         string
 	IsSubAgent           bool
 	DisableAutoSummarize bool
+	DisableTidy          bool
 	IsYolo               bool
 	Sessions             session.Service
 	Messages             message.Service
@@ -152,8 +154,8 @@ func NewSessionAgent(
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 	}
 
-	// Only enable tidy for main agents (not sub-agents).
-	if !opts.IsSubAgent {
+	// Only enable tidy for main agents (not sub-agents) when not disabled.
+	if !opts.IsSubAgent && !opts.DisableTidy {
 		a.tidyManager = NewTidyManager()
 	}
 
@@ -585,11 +587,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	a.activeRequests.Del(call.SessionID)
 	cancel()
 
-	// Schedule background tidy after conversation goes idle.
-	if a.tidyManager != nil && err == nil {
-		a.tidyManager.Touch(call.SessionID, a.buildTidyRunner(call.SessionID))
-	}
-
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 	if !ok || len(queuedMessages) == 0 {
 		return result, err
@@ -717,6 +714,14 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	// Extract and return the summary text.
 	summaryText := summaryMessage.Content().Text
 	return summaryText, nil
+}
+
+func (a *sessionAgent) RunTidy(ctx context.Context, sessionID string) error {
+	if a.tidyManager == nil {
+		return errors.New("tidy is not enabled")
+	}
+	a.tidyManager.RunNow(ctx, sessionID, a.buildTidyRunner(sessionID))
+	return nil
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
@@ -1290,9 +1295,9 @@ func (a *sessionAgent) buildTidyRunner(sessionID string) func(context.Context) (
 			return nil, fmt.Errorf("failed to build tidy prompt: %w", err)
 		}
 
-		// Use small model to analyze and compress.
-		smallModel := a.smallModel.Get()
-		agent := fantasy.NewAgent(smallModel.Model,
+		// Use large model to analyze and compress.
+		largeModel := a.largeModel.Get()
+		agent := fantasy.NewAgent(largeModel.Model,
 			fantasy.WithMaxOutputTokens(2000),
 		)
 
@@ -1311,13 +1316,13 @@ func (a *sessionAgent) buildTidyRunner(sessionID string) func(context.Context) (
 		}
 
 		// Build the result map.
-		result_map := make(map[string]string)
+		resultMap := make(map[string]string)
 		for _, c := range compressions {
 			if c.Summary != "" {
-				result_map[c.ToolCallID] = c.Summary
+				resultMap[c.ToolCallID] = c.Summary
 			}
 		}
 
-		return result_map, nil
+		return resultMap, nil
 	}
 }

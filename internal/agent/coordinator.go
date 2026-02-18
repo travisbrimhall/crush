@@ -60,6 +60,7 @@ type Coordinator interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string) error
+	RunTidy(context.Context, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
 	TemplateStore() *templates.Store
@@ -399,6 +400,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		SystemPrompt:         "",
 		IsSubAgent:           isSubAgent,
 		DisableAutoSummarize: c.cfg.Options.DisableAutoSummarize,
+		DisableTidy:          c.cfg.Options.DisableTidy,
 		IsYolo:               c.permissions.SkipRequests(),
 		Sessions:             c.sessions,
 		Messages:             c.messages,
@@ -997,6 +999,10 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	}
 
 	return nil
+}
+
+func (c *coordinator) RunTidy(ctx context.Context, sessionID string) error {
+	return c.currentAgent.RunTidy(ctx, sessionID)
 }
 
 func (c *coordinator) isUnauthorized(err error) bool {
