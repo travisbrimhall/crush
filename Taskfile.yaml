@@ -21,9 +21,12 @@ tasks:
       GOTOOLCHAIN: go1.25.0
 
   lint:
-    desc: Run base linters
+    desc: Run all linters in parallel
+    deps: [lint:log, lint:go]
+
+  lint:go:
+    desc: Run golangci-lint
     cmds:
-      - task: lint:log
       - golangci-lint run --path-mode=abs --config=".golangci.yml" --timeout=5m
     env:
       GOEXPERIMENT: null
@@ -75,6 +78,10 @@ tasks:
       - task: build
       - rm -rf tmp/onboarding
       - ./crush{exeExt} {{.CLI_ARGS}}
+
+  check:
+    desc: Run all checks in parallel (lint, test, build)
+    deps: [lint, test, build]
 
   test:
     desc: Run tests
