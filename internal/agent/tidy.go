@@ -24,7 +24,7 @@ const (
 	// tidyMinContentSize is the minimum content size to consider for tidying.
 	tidyMinContentSize = 500
 	// tidyMinMessageAge is how many messages old content must be to tidy.
-	tidyMinMessageAge = 6
+	tidyMinMessageAge = 0
 	// tidyIdleInterval is how long to wait after last activity before tidying.
 	tidyIdleInterval = 30 * time.Second
 )
