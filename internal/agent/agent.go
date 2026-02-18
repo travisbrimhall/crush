@@ -73,6 +73,7 @@ type SessionAgentCall struct {
 	TopK             *int64
 	FrequencyPenalty *float64
 	PresencePenalty  *float64
+	TemplateContext  string // Injected into system prompt for sessions with templates
 }
 
 type SessionAgent interface {
@@ -238,6 +239,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	history, files := a.preparePrompt(msgs, call.Attachments...)
 
+	// Track if session has a summary - used to cache the summary message.
+	hasSummary := currentSession.SummaryMessageID != ""
+
 	startTime := time.Now()
 	a.eventPromptSent(call.SessionID)
 
@@ -273,24 +277,39 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)
 
-			lastSystemRoleInx := 0
-			systemMessageUpdated := false
-			for i, msg := range prepared.Messages {
-				// Only add cache control to the last message.
-				if msg.Role == fantasy.MessageRoleSystem {
-					lastSystemRoleInx = i
-				} else if !systemMessageUpdated {
-					prepared.Messages[lastSystemRoleInx].ProviderOptions = a.getCacheControlOptions()
-					systemMessageUpdated = true
-				}
-				// Than add cache control to the last 2 messages.
-				if i > len(prepared.Messages)-3 {
-					prepared.Messages[i].ProviderOptions = a.getCacheControlOptions()
-				}
+			// Inject template context as system message (cacheable).
+			if call.TemplateContext != "" {
+				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(call.TemplateContext)}, prepared.Messages...)
 			}
 
 			if promptPrefix != "" {
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(promptPrefix)}, prepared.Messages...)
+			}
+
+			// Apply cache control markers AFTER all messages are assembled.
+			// Mark: last system message, summary (if present), and last 2 messages.
+			lastSystemRoleInx := 0
+			systemMessageUpdated := false
+			summaryMarked := false
+			for i, msg := range prepared.Messages {
+				if msg.Role == fantasy.MessageRoleSystem {
+					lastSystemRoleInx = i
+				} else if !systemMessageUpdated {
+					// Mark the last system message.
+					prepared.Messages[lastSystemRoleInx].ProviderOptions = a.getCacheControlOptions()
+					systemMessageUpdated = true
+
+					// If session has a summary, the first user message IS the summary.
+					// Mark it for caching since it's stable context.
+					if hasSummary && !summaryMarked && msg.Role == fantasy.MessageRoleUser {
+						prepared.Messages[i].ProviderOptions = a.getCacheControlOptions()
+						summaryMarked = true
+					}
+				}
+				// Add cache control to the last 2 messages.
+				if i > len(prepared.Messages)-3 {
+					prepared.Messages[i].ProviderOptions = a.getCacheControlOptions()
+				}
 			}
 
 			var assistantMsg message.Message

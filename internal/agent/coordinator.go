@@ -153,10 +153,11 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		return nil, fmt.Errorf("failed to update models: %w", err)
 	}
 
-	// Inject template context for first message of sessions with a template.
-	prompt, err := c.injectTemplateContext(ctx, sessionID, prompt)
+	// Build template context for first message of sessions with a template.
+	// This gets injected as a system message for better caching.
+	templateContext, err := c.getTemplateContext(ctx, sessionID)
 	if err != nil {
-		slog.Warn("Failed to inject template context", "error", err)
+		slog.Warn("Failed to get template context", "error", err)
 	}
 
 	model := c.currentAgent.Model()
@@ -202,6 +203,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 			TopK:             topK,
 			FrequencyPenalty: freqPenalty,
 			PresencePenalty:  presPenalty,
+			TemplateContext:  templateContext,
 		})
 	}
 	result, originalErr := run()
@@ -910,41 +912,41 @@ func (c *coordinator) TemplateStore() *templates.Store {
 	return c.templates
 }
 
-// injectTemplateContext prepends template context to the prompt for the first message
-// of a session that was started with a template.
-func (c *coordinator) injectTemplateContext(ctx context.Context, sessionID, prompt string) (string, error) {
+// getTemplateContext returns the template context for a session if applicable.
+// Returns empty string if no template or not first message.
+func (c *coordinator) getTemplateContext(ctx context.Context, sessionID string) (string, error) {
 	if c.templates == nil {
-		return prompt, nil
+		return "", nil
 	}
 
 	sess, err := c.sessions.Get(ctx, sessionID)
 	if err != nil {
-		return prompt, err
+		return "", err
 	}
 
 	// Only inject on first message.
 	if sess.MessageCount > 0 {
-		return prompt, nil
+		return "", nil
 	}
 
 	// Only inject if session has a template.
 	if sess.TemplateID == "" {
-		return prompt, nil
+		return "", nil
 	}
 
 	tmpl := c.templates.Get(sess.TemplateID)
 	if tmpl == nil {
 		slog.Warn("Template not found for session", "template_id", sess.TemplateID)
-		return prompt, nil
+		return "", nil
 	}
 
 	templateContext, err := c.templates.BuildContext(ctx, tmpl)
 	if err != nil {
-		return prompt, err
+		return "", err
 	}
 
-	slog.Debug("Injected template context", "template", tmpl.Name, "session", sessionID)
-	return templateContext + "\n\n---\n\n" + prompt, nil
+	slog.Debug("Built template context for system prompt", "template", tmpl.Name, "session", sessionID)
+	return templateContext, nil
 }
 
 func (c *coordinator) UpdateModels(ctx context.Context) error {
