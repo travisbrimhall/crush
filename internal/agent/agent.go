@@ -115,8 +115,8 @@ type sessionAgent struct {
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
 
-	// cacheKeepalive manages background pings to keep Anthropic caches warm.
-	cacheKeepalive *CacheKeepalive
+	// tidyManager manages background compression of bulky tool outputs.
+	tidyManager *TidyManager
 }
 
 type SessionAgentOptions struct {
@@ -152,9 +152,9 @@ func NewSessionAgent(
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 	}
 
-	// Only enable cache keepalive for main agents (not sub-agents).
+	// Only enable tidy for main agents (not sub-agents).
 	if !opts.IsSubAgent {
-		a.cacheKeepalive = NewCacheKeepalive()
+		a.tidyManager = NewTidyManager()
 	}
 
 	return a
@@ -258,7 +258,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	var currentAssistant *message.Message
 	var shouldSummarize bool
 	var lspBatcher *lsp.Batcher
-	var lastPreparedMessages []fantasy.Message
 	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
@@ -291,6 +290,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			// Deduplicate repeated file contents to reduce token usage.
 			DedupeToolOutputs(prepared.Messages)
 
+			// Apply any cached tidy compressions from background processing.
+			if a.tidyManager != nil {
+				ApplyTidyCompressions(prepared.Messages, func(toolCallID string) (string, bool) {
+					return a.tidyManager.GetCompression(call.SessionID, toolCallID)
+				})
+			}
+
 			// Inject template context as system message (cacheable).
 			if call.TemplateContext != "" {
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(call.TemplateContext)}, prepared.Messages...)
@@ -302,9 +308,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			// Apply cache control markers AFTER all messages are assembled.
 			applyCacheMarkers(prepared.Messages, hasSummary, a.getCacheControlOptions())
-
-			// Capture prepared messages for cache keepalive.
-			lastPreparedMessages = prepared.Messages
 
 			var assistantMsg message.Message
 			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
@@ -407,19 +410,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if lspBatcher != nil {
 				lspBatcher.Flush(genCtx)
 				lspBatcher = nil
-			}
-
-			// Start/reset cache keepalive timer for Anthropic-backed providers.
-			// Anthropic, Bedrock, and Vercel all use Anthropic's prompt caching.
-			if a.cacheKeepalive != nil {
-				switch largeModel.Model.Provider() {
-				case anthropic.Name, bedrock.Name, vercel.Name:
-					a.cacheKeepalive.Touch(call.SessionID, buildKeepalivePing(
-						largeModel.Model,
-						lastPreparedMessages,
-						a.getCacheControlOptions(),
-					))
-				}
 			}
 
 			finishReason := message.FinishReasonUnknown
@@ -594,6 +584,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// Release active request before processing queued messages.
 	a.activeRequests.Del(call.SessionID)
 	cancel()
+
+	// Schedule background tidy after conversation goes idle.
+	if a.tidyManager != nil && err == nil {
+		a.tidyManager.Touch(call.SessionID, a.buildTidyRunner(call.SessionID))
+	}
 
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 	if !ok || len(queuedMessages) == 0 {
@@ -1263,4 +1258,66 @@ func buildSummaryPrompt(todos []session.Todo) string {
 		sb.WriteString("Instruct the resuming assistant to use the `todos` tool to continue tracking progress on these tasks.")
 	}
 	return sb.String()
+}
+
+// buildTidyRunner creates the function that runs the tidy subagent.
+// It captures the session ID and uses the small model to compress bulky tool outputs.
+func (a *sessionAgent) buildTidyRunner(sessionID string) func(context.Context) (map[string]string, error) {
+	return func(ctx context.Context) (map[string]string, error) {
+		// Get current session and messages.
+		currentSession, err := a.sessions.Get(ctx, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get session: %w", err)
+		}
+
+		msgs, err := a.getSessionMessages(ctx, currentSession)
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert to fantasy messages for candidate finding.
+		aiMsgs, _ := a.preparePrompt(msgs)
+
+		// Find candidates for compression.
+		candidates := FindTidyCandidates(aiMsgs)
+		if len(candidates) == 0 {
+			return nil, nil
+		}
+
+		// Build the tidy prompt.
+		tidyPrompt, err := BuildTidyPrompt(candidates)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build tidy prompt: %w", err)
+		}
+
+		// Use small model to analyze and compress.
+		smallModel := a.smallModel.Get()
+		agent := fantasy.NewAgent(smallModel.Model,
+			fantasy.WithMaxOutputTokens(2000),
+		)
+
+		result, err := agent.Generate(ctx, fantasy.AgentCall{
+			Prompt: tidyPrompt,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("tidy agent failed: %w", err)
+		}
+
+		// Parse response to get compressions.
+		compressions, err := ParseTidyResponse(result.Response.Content.Text())
+		if err != nil {
+			slog.Debug("Failed to parse tidy response", "error", err)
+			return nil, nil // Non-fatal.
+		}
+
+		// Build the result map.
+		result_map := make(map[string]string)
+		for _, c := range compressions {
+			if c.Summary != "" {
+				result_map[c.ToolCallID] = c.Summary
+			}
+		}
+
+		return result_map, nil
+	}
 }
