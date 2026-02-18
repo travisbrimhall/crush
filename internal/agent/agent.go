@@ -288,6 +288,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)
 
+			// Deduplicate repeated file contents to reduce token usage.
+			DedupeToolOutputs(prepared.Messages)
+
 			// Inject template context as system message (cacheable).
 			if call.TemplateContext != "" {
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(call.TemplateContext)}, prepared.Messages...)
