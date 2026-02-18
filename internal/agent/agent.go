@@ -114,6 +114,9 @@ type sessionAgent struct {
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
+
+	// cacheKeepalive manages background pings to keep Anthropic caches warm.
+	cacheKeepalive *CacheKeepalive
 }
 
 type SessionAgentOptions struct {
@@ -133,7 +136,7 @@ type SessionAgentOptions struct {
 func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
-	return &sessionAgent{
+	a := &sessionAgent{
 		largeModel:           csync.NewValue(opts.LargeModel),
 		smallModel:           csync.NewValue(opts.SmallModel),
 		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
@@ -148,6 +151,13 @@ func NewSessionAgent(
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 	}
+
+	// Only enable cache keepalive for main agents (not sub-agents).
+	if !opts.IsSubAgent {
+		a.cacheKeepalive = NewCacheKeepalive()
+	}
+
+	return a
 }
 
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
@@ -248,6 +258,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	var currentAssistant *message.Message
 	var shouldSummarize bool
 	var lspBatcher *lsp.Batcher
+	var lastPreparedMessages []fantasy.Message
 	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
@@ -287,30 +298,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			// Apply cache control markers AFTER all messages are assembled.
-			// Mark: last system message, summary (if present), and last 2 messages.
-			lastSystemRoleInx := 0
-			systemMessageUpdated := false
-			summaryMarked := false
-			for i, msg := range prepared.Messages {
-				if msg.Role == fantasy.MessageRoleSystem {
-					lastSystemRoleInx = i
-				} else if !systemMessageUpdated {
-					// Mark the last system message.
-					prepared.Messages[lastSystemRoleInx].ProviderOptions = a.getCacheControlOptions()
-					systemMessageUpdated = true
+			applyCacheMarkers(prepared.Messages, hasSummary, a.getCacheControlOptions())
 
-					// If session has a summary, the first user message IS the summary.
-					// Mark it for caching since it's stable context.
-					if hasSummary && !summaryMarked && msg.Role == fantasy.MessageRoleUser {
-						prepared.Messages[i].ProviderOptions = a.getCacheControlOptions()
-						summaryMarked = true
-					}
-				}
-				// Add cache control to the last 2 messages.
-				if i > len(prepared.Messages)-3 {
-					prepared.Messages[i].ProviderOptions = a.getCacheControlOptions()
-				}
-			}
+			// Capture prepared messages for cache keepalive.
+			lastPreparedMessages = prepared.Messages
 
 			var assistantMsg message.Message
 			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
@@ -413,6 +404,19 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if lspBatcher != nil {
 				lspBatcher.Flush(genCtx)
 				lspBatcher = nil
+			}
+
+			// Start/reset cache keepalive timer for Anthropic-backed providers.
+			// Anthropic, Bedrock, and Vercel all use Anthropic's prompt caching.
+			if a.cacheKeepalive != nil {
+				switch largeModel.Model.Provider() {
+				case anthropic.Name, bedrock.Name, vercel.Name:
+					a.cacheKeepalive.Touch(call.SessionID, buildKeepalivePing(
+						largeModel.Model,
+						lastPreparedMessages,
+						a.getCacheControlOptions(),
+					))
+				}
 			}
 
 			finishReason := message.FinishReasonUnknown
@@ -731,6 +735,47 @@ func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
 		vercel.Name: &anthropic.ProviderCacheControlOptions{
 			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
 		},
+	}
+}
+
+// applyCacheMarkers applies cache control markers to messages for efficient
+// prompt caching. It marks:
+//   - The last system message (stable context)
+//   - The summary message if present (first user message after systems)
+//   - The last 2 messages (recent context)
+//
+// Messages are modified in place.
+func applyCacheMarkers(messages []fantasy.Message, hasSummary bool, cacheOpts fantasy.ProviderOptions) {
+	if len(messages) == 0 {
+		return
+	}
+
+	// Find and mark the last system message.
+	lastSystemIdx := -1
+	for i, msg := range messages {
+		if msg.Role == fantasy.MessageRoleSystem {
+			lastSystemIdx = i
+		}
+	}
+	if lastSystemIdx >= 0 {
+		messages[lastSystemIdx].ProviderOptions = cacheOpts
+	}
+
+	// If session has a summary, mark the first user message (the summary).
+	if hasSummary {
+		for i, msg := range messages {
+			if msg.Role == fantasy.MessageRoleUser {
+				messages[i].ProviderOptions = cacheOpts
+				break
+			}
+		}
+	}
+
+	// Mark the last 2 messages.
+	for i := range messages {
+		if i > len(messages)-3 {
+			messages[i].ProviderOptions = cacheOpts
+		}
 	}
 }
 
