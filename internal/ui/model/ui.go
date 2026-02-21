@@ -270,8 +270,18 @@ func New(com *common.Common) *UI {
 		attachments.NewRenderer(
 			com.Styles.Attachments.Normal,
 			com.Styles.Attachments.Deleting,
-			com.Styles.Attachments.Image,
-			com.Styles.Attachments.Text,
+			attachments.IconStyles{
+				Image:   com.Styles.Attachments.Image,
+				Text:    com.Styles.Attachments.Text,
+				Code:    com.Styles.Attachments.Code,
+				Config:  com.Styles.Attachments.Config,
+				Archive: com.Styles.Attachments.Archive,
+				Audio:   com.Styles.Attachments.Audio,
+				Video:   com.Styles.Attachments.Video,
+				PDF:     com.Styles.Attachments.PDF,
+				Data:    com.Styles.Attachments.Data,
+				File:    com.Styles.Attachments.File,
+			},
 		),
 		attachments.Keymap{
 			DeleteMode: keyMap.Editor.AttachmentDeleteMode,

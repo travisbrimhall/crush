@@ -149,7 +149,9 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 
 // renderThinking renders the thinking/reasoning content with footer.
 func (a *AssistantMessageItem) renderThinking(thinking string, width int) string {
-	renderer := common.PlainMarkdownRenderer(a.sty, width)
+	// Account for border and padding in content width.
+	contentWidth := width - 6 // 2 border + 4 padding (2 each side)
+	renderer := common.PlainMarkdownRenderer(a.sty, contentWidth)
 	rendered, err := renderer.Render(thinking)
 	if err != nil {
 		rendered = thinking
@@ -158,6 +160,9 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 
 	lines := strings.Split(rendered, "\n")
 	totalLines := len(lines)
+
+	// Add header with brain icon.
+	header := a.sty.Chat.Message.ThinkingHeader.Render(styles.ThinkingIcon + " Thinking")
 
 	isTruncated := totalLines > maxCollapsedThinkingHeight
 	if !a.thinkingExpanded && isTruncated {
@@ -168,23 +173,12 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		lines = append([]string{hint, ""}, lines...)
 	}
 
+	// Prepend header to content.
+	content := header + "\n" + strings.Join(lines, "\n")
+
 	thinkingStyle := a.sty.Chat.Message.ThinkingBox.Width(width)
-	result := thinkingStyle.Render(strings.Join(lines, "\n"))
+	result := thinkingStyle.Render(content)
 	a.thinkingBoxHeight = lipgloss.Height(result)
-
-	var footer string
-	// if thinking is done add the thought for footer
-	if !a.message.IsThinking() || len(a.message.ToolCalls()) > 0 {
-		duration := a.message.ThinkingDuration()
-		if duration.String() != "0s" {
-			footer = a.sty.Chat.Message.ThinkingFooterTitle.Render("Thought for ") +
-				a.sty.Chat.Message.ThinkingFooterDuration.Render(duration.String())
-		}
-	}
-
-	if footer != "" {
-		result += "\n\n" + footer
-	}
 
 	return result
 }

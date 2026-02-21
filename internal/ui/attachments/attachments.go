@@ -11,10 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/charmbracelet/x/ansi"
 )
-
-const maxFilename = 15
 
 type Keymap struct {
 	DeleteMode,
@@ -78,31 +75,33 @@ func (m *Attachments) Render(width int) string {
 	return m.renderer.Render(m.list, m.deleting, width)
 }
 
-func NewRenderer(normalStyle, deletingStyle, imageStyle, textStyle lipgloss.Style) *Renderer {
+func NewRenderer(normalStyle, deletingStyle lipgloss.Style, icons IconStyles) *Renderer {
 	return &Renderer{
 		normalStyle:   normalStyle,
-		textStyle:     textStyle,
-		imageStyle:    imageStyle,
 		deletingStyle: deletingStyle,
+		icons:         icons,
 	}
 }
 
+// IconStyles holds styles for different file type icons.
+type IconStyles struct {
+	Image, Text, Code, Config, Archive, Audio, Video, PDF, Data, File lipgloss.Style
+}
+
 type Renderer struct {
-	normalStyle, textStyle, imageStyle, deletingStyle lipgloss.Style
+	normalStyle, deletingStyle lipgloss.Style
+	icons                      IconStyles
 }
 
 func (r *Renderer) Render(attachments []message.Attachment, deleting bool, width int) string {
 	var chips []string
 
-	maxItemWidth := lipgloss.Width(r.imageStyle.String() + r.normalStyle.Render(strings.Repeat("x", maxFilename)))
+	// Estimate max item width using a reasonable filename length.
+	maxItemWidth := lipgloss.Width(r.icons.Image.String() + r.normalStyle.Render(strings.Repeat("x", 30)))
 	fits := int(math.Floor(float64(width)/float64(maxItemWidth))) - 1
 
 	for i, att := range attachments {
 		filename := filepath.Base(att.FileName)
-		// Truncate if needed.
-		if ansi.StringWidth(filename) > maxFilename {
-			filename = ansi.Truncate(filename, maxFilename, "…")
-		}
 
 		if deleting {
 			chips = append(
@@ -128,8 +127,64 @@ func (r *Renderer) Render(attachments []message.Attachment, deleting bool, width
 }
 
 func (r *Renderer) icon(a message.Attachment) lipgloss.Style {
+	ext := strings.ToLower(filepath.Ext(a.FileName))
+
+	// Images.
 	if a.IsImage() {
-		return r.imageStyle
+		return r.icons.Image
 	}
-	return r.textStyle
+
+	// Code files.
+	switch ext {
+	case ".go", ".js", ".ts", ".tsx", ".jsx", ".py", ".rb", ".rs", ".c", ".cpp", ".h",
+		".java", ".kt", ".swift", ".cs", ".php", ".sh", ".bash", ".zsh", ".fish",
+		".lua", ".pl", ".r", ".scala", ".zig", ".nim", ".ex", ".exs", ".erl",
+		".hs", ".ml", ".fs", ".clj", ".lisp", ".el", ".vim", ".sql":
+		return r.icons.Code
+	}
+
+	// Config files.
+	switch ext {
+	case ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env",
+		".xml", ".plist", ".properties":
+		return r.icons.Config
+	}
+
+	// Archive files.
+	switch ext {
+	case ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".tgz":
+		return r.icons.Archive
+	}
+
+	// Audio files.
+	switch ext {
+	case ".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a", ".wma":
+		return r.icons.Audio
+	}
+
+	// Video files.
+	switch ext {
+	case ".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv":
+		return r.icons.Video
+	}
+
+	// PDF.
+	if ext == ".pdf" {
+		return r.icons.PDF
+	}
+
+	// Data files.
+	switch ext {
+	case ".csv", ".tsv", ".xls", ".xlsx", ".parquet", ".db", ".sqlite":
+		return r.icons.Data
+	}
+
+	// Text/document files.
+	switch ext {
+	case ".txt", ".md", ".markdown", ".rst", ".adoc", ".org", ".tex", ".rtf", ".doc", ".docx":
+		return r.icons.Text
+	}
+
+	// Default fallback.
+	return r.icons.File
 }

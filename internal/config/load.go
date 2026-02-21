@@ -479,6 +479,7 @@ func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (large
 			Model:           defaultLargeModel.ID,
 			MaxTokens:       defaultLargeModel.DefaultMaxTokens,
 			ReasoningEffort: defaultLargeModel.DefaultReasoningEffort,
+			Think:           defaultLargeModel.CanReason && len(defaultLargeModel.ReasoningLevels) == 0,
 		}
 
 		defaultSmallModel := c.GetModel(string(p.ID), p.DefaultSmallModelID)
@@ -491,6 +492,7 @@ func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (large
 			Model:           defaultSmallModel.ID,
 			MaxTokens:       defaultSmallModel.DefaultMaxTokens,
 			ReasoningEffort: defaultSmallModel.DefaultReasoningEffort,
+			Think:           defaultSmallModel.CanReason && len(defaultSmallModel.ReasoningLevels) == 0,
 		}
 		return largeModel, smallModel, err
 	}
@@ -515,12 +517,14 @@ func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (large
 		Provider:  providerConfig.ID,
 		Model:     defaultLargeModel.ID,
 		MaxTokens: defaultLargeModel.DefaultMaxTokens,
+		Think:     defaultLargeModel.CanReason && len(defaultLargeModel.ReasoningLevels) == 0,
 	}
 	defaultSmallModel := c.GetModel(providerConfig.ID, providerConfig.Models[0].ID)
 	smallModel = SelectedModel{
 		Provider:  providerConfig.ID,
 		Model:     defaultSmallModel.ID,
 		MaxTokens: defaultSmallModel.DefaultMaxTokens,
+		Think:     defaultSmallModel.CanReason && len(defaultSmallModel.ReasoningLevels) == 0,
 	}
 	return largeModel, smallModel, err
 }

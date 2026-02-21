@@ -313,10 +313,10 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			}
 		}
 	case anthropic.Name:
+		// Enable thinking by default for Anthropic models.
 		_, hasThink := mergedOptions["thinking"]
-		if !hasThink && model.ModelCfg.Think {
+		if !hasThink {
 			mergedOptions["thinking"] = map[string]any{
-				// TODO: kujtim see if we need to make this dynamic
 				"budget_tokens": 2000,
 			}
 		}
@@ -804,23 +804,9 @@ func (c *coordinator) buildHyperProvider(baseURL, apiKey string) (fantasy.Provid
 	return hyper.New(opts...)
 }
 
-func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {
-	if model.Think {
-		return true
-	}
-
-	if model.ProviderOptions == nil {
-		return false
-	}
-
-	opts, err := anthropic.ParseOptions(model.ProviderOptions)
-	if err != nil {
-		return false
-	}
-	if opts.Thinking != nil {
-		return true
-	}
-	return false
+func (c *coordinator) isAnthropicThinking(_ config.SelectedModel) bool {
+	// Thinking is always enabled for Anthropic models.
+	return true
 }
 
 func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model config.SelectedModel, isSubAgent bool) (fantasy.Provider, error) {

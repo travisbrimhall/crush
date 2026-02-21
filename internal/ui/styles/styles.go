@@ -40,8 +40,18 @@ const (
 	TodoPendingIcon    string = "•"
 	TodoInProgressIcon string = "→"
 
-	ImageIcon string = "■"
-	TextIcon  string = "≡"
+	ImageIcon   string = "📸"
+	TextIcon    string = "📄"
+	CodeIcon    string = "💻"
+	ConfigIcon  string = "⚙️"
+	ArchiveIcon string = "📦"
+	AudioIcon   string = "🎵"
+	VideoIcon   string = "🎬"
+	PDFIcon     string = "📕"
+	DataIcon    string = "📊"
+	FileIcon    string = "📎"
+
+	ThinkingIcon string = "🧠"
 
 	ScrollbarThumb string = "┃"
 	ScrollbarTrack string = "│"
@@ -246,9 +256,8 @@ type Styles struct {
 
 			// Thinking section styles
 			ThinkingBox            lipgloss.Style // Background for thinking content
+			ThinkingHeader         lipgloss.Style // Header with brain icon
 			ThinkingTruncationHint lipgloss.Style // "… (N lines hidden)" hint
-			ThinkingFooterTitle    lipgloss.Style // "Thought for" text
-			ThinkingFooterDuration lipgloss.Style // Duration value
 			AssistantInfoIcon      lipgloss.Style
 			AssistantInfoModel     lipgloss.Style
 			AssistantInfoProvider  lipgloss.Style
@@ -430,6 +439,14 @@ type Styles struct {
 		Normal   lipgloss.Style
 		Image    lipgloss.Style
 		Text     lipgloss.Style
+		Code     lipgloss.Style
+		Config   lipgloss.Style
+		Archive  lipgloss.Style
+		Audio    lipgloss.Style
+		Video    lipgloss.Style
+		PDF      lipgloss.Style
+		Data     lipgloss.Style
+		File     lipgloss.Style
 		Deleting lipgloss.Style
 	}
 
@@ -1272,10 +1289,23 @@ func DefaultStyles() Styles {
 	s.Chat.Message.AssistantInfoDuration = s.Subtle
 
 	// Thinking section styles
-	s.Chat.Message.ThinkingBox = s.Subtle.Background(bgBaseLighter)
+	thinkingBorder := lipgloss.Border{
+		Top:         "·",
+		Bottom:      "·",
+		Left:        "·",
+		Right:       "·",
+		TopLeft:     "·",
+		TopRight:    "·",
+		BottomLeft:  "·",
+		BottomRight: "·",
+	}
+	s.Chat.Message.ThinkingBox = s.Subtle.
+		Background(bgBaseLighter).
+		Border(thinkingBorder).
+		BorderForeground(fgMuted).
+		Padding(1, 2)
+	s.Chat.Message.ThinkingHeader = s.Muted.Bold(true).MarginBottom(1)
 	s.Chat.Message.ThinkingTruncationHint = s.Muted
-	s.Chat.Message.ThinkingFooterTitle = s.Muted
-	s.Chat.Message.ThinkingFooterDuration = s.Subtle
 
 	// Text selection.
 	s.TextSelection = lipgloss.NewStyle().Foreground(charmtone.Salt).Background(charmtone.Charple)
@@ -1350,9 +1380,17 @@ func DefaultStyles() Styles {
 	s.Completions.Match = base.Underline(true)
 
 	// Attachments styles
-	attachmentIconStyle := base.Foreground(bgSubtle).Background(green).Padding(0, 1)
+	attachmentIconStyle := base.Padding(0, 1)
 	s.Attachments.Image = attachmentIconStyle.SetString(ImageIcon)
 	s.Attachments.Text = attachmentIconStyle.SetString(TextIcon)
+	s.Attachments.Code = attachmentIconStyle.SetString(CodeIcon)
+	s.Attachments.Config = attachmentIconStyle.SetString(ConfigIcon)
+	s.Attachments.Archive = attachmentIconStyle.SetString(ArchiveIcon)
+	s.Attachments.Audio = attachmentIconStyle.SetString(AudioIcon)
+	s.Attachments.Video = attachmentIconStyle.SetString(VideoIcon)
+	s.Attachments.PDF = attachmentIconStyle.SetString(PDFIcon)
+	s.Attachments.Data = attachmentIconStyle.SetString(DataIcon)
+	s.Attachments.File = attachmentIconStyle.SetString(FileIcon)
 	s.Attachments.Normal = base.Padding(0, 1).MarginRight(1).Background(fgMuted).Foreground(fgBase)
 	s.Attachments.Deleting = base.Padding(0, 1).Bold(true).Background(red).Foreground(fgBase)
 

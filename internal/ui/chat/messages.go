@@ -263,8 +263,18 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 		r := attachments.NewRenderer(
 			sty.Attachments.Normal,
 			sty.Attachments.Deleting,
-			sty.Attachments.Image,
-			sty.Attachments.Text,
+			attachments.IconStyles{
+				Image:   sty.Attachments.Image,
+				Text:    sty.Attachments.Text,
+				Code:    sty.Attachments.Code,
+				Config:  sty.Attachments.Config,
+				Archive: sty.Attachments.Archive,
+				Audio:   sty.Attachments.Audio,
+				Video:   sty.Attachments.Video,
+				PDF:     sty.Attachments.PDF,
+				Data:    sty.Attachments.Data,
+				File:    sty.Attachments.File,
+			},
 		)
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
