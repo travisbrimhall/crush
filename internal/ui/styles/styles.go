@@ -335,6 +335,13 @@ type Styles struct {
 		MCPName     lipgloss.Style // The mcp name
 		MCPToolName lipgloss.Style // The mcp tool name
 		MCPArrow    lipgloss.Style // The mcp arrow icon
+
+		// Grep output styles
+		GrepMatchCount     lipgloss.Style // "Found X matches"
+		GrepFilePath       lipgloss.Style // File path lines
+		GrepLineInfo       lipgloss.Style // "Line X, Char Y:"
+		GrepContent        lipgloss.Style // Matched content
+		GrepMatchHighlight lipgloss.Style // The actual matched text
 	}
 
 	// Dialog styles
@@ -559,8 +566,6 @@ func DefaultStyles() Styles {
 		// redLight = charmtone.Salmon
 		// cherry   = charmtone.Cherry
 	)
-
-	normalBorder := lipgloss.NormalBorder()
 
 	base := lipgloss.NewStyle().Foreground(fgBase)
 
@@ -1198,6 +1203,13 @@ func DefaultStyles() Styles {
 	s.Tool.MCPToolName = base.Foreground(blueDark)
 	s.Tool.MCPArrow = base.Foreground(blue).SetString(ArrowRightIcon)
 
+	// Grep output styles
+	s.Tool.GrepMatchCount = base.Foreground(fgSubtle)
+	s.Tool.GrepFilePath = base.Foreground(blue)
+	s.Tool.GrepLineInfo = base.Foreground(fgMuted)
+	s.Tool.GrepContent = base.Foreground(fgBase)
+	s.Tool.GrepMatchHighlight = base.Foreground(yellow).Bold(true)
+
 	// Buttons
 	s.ButtonFocus = lipgloss.NewStyle().Foreground(white).Background(secondary)
 	s.ButtonBlur = s.Base.Background(bgSubtle)
@@ -1259,11 +1271,20 @@ func DefaultStyles() Styles {
 	}
 
 	s.Chat.Message.NoContent = lipgloss.NewStyle().Foreground(fgBase)
-	s.Chat.Message.UserBlurred = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(primary).BorderStyle(normalBorder).
+	userBorder := lipgloss.Border{Left: "┃"}
+	s.Chat.Message.UserBlurred = lipgloss.NewStyle().
+		Foreground(fgBase).
+		PaddingLeft(1).
+		BorderLeft(true).
+		BorderForeground(primary).
+		BorderStyle(userBorder).
 		MarginBottom(1)
-	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(primary).BorderStyle(messageFocussedBorder).
+	s.Chat.Message.UserFocused = lipgloss.NewStyle().
+		Foreground(fgBase).
+		PaddingLeft(1).
+		BorderLeft(true).
+		BorderForeground(primary).
+		BorderStyle(userBorder).
 		MarginBottom(1)
 	s.Chat.Message.AssistantBlurred = s.Chat.Message.NoContent.PaddingLeft(4).MarginBottom(1)
 	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(4).BorderLeft(true).

@@ -2,11 +2,17 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/stringext"
 	"github.com/charmbracelet/crush/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // -----------------------------------------------------------------------------
@@ -129,8 +135,133 @@ func (g *GrepToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(toolOutputGrepContent(sty, opts.Result.Content, params.Pattern, params.LiteralText, bodyWidth, opts.ExpandedContent))
 	return joinToolParts(header, body)
+}
+
+// grepLineInfoRegex matches "Line X, Char Y:" or "Line X:" at the start of a line.
+var grepLineInfoRegex = regexp.MustCompile(`^(\s*)(Line \d+(?:, Char \d+)?:)(.*)$`)
+
+// toolOutputGrepContent renders grep output with styled file paths and line info.
+func toolOutputGrepContent(sty *styles.Styles, content, pattern string, literalText bool, width int, expanded bool) string {
+	content = stringext.NormalizeSpace(content)
+	lines := strings.Split(content, "\n")
+
+	// Compile the pattern for highlighting
+	var matchRegex *regexp.Regexp
+	if pattern != "" {
+		if literalText {
+			pattern = regexp.QuoteMeta(pattern)
+		}
+		// Case-insensitive matching for highlighting
+		matchRegex, _ = regexp.Compile("(?i)(" + pattern + ")")
+	}
+
+	maxLines := responseContextHeight
+	if expanded {
+		maxLines = len(lines)
+	}
+
+	var out []string
+	for i, ln := range lines {
+		if i >= maxLines {
+			break
+		}
+
+		styled := styleGrepLine(sty, ln, matchRegex, width)
+		out = append(out, styled)
+	}
+
+	wasTruncated := len(lines) > responseContextHeight
+	if !expanded && wasTruncated {
+		out = append(out, sty.Tool.ContentTruncation.
+			Width(width).
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+	}
+
+	return strings.Join(out, "\n")
+}
+
+// styleGrepLine applies styling to a single grep output line.
+func styleGrepLine(sty *styles.Styles, line string, matchRegex *regexp.Regexp, width int) string {
+	// Empty lines - no background
+	if strings.TrimSpace(line) == "" {
+		return ""
+	}
+
+	line = " " + line
+
+	// "Found X matches" or "No files found"
+	if strings.HasPrefix(line, " Found ") || strings.HasPrefix(line, " No files") {
+		if lipgloss.Width(line) > width {
+			line = ansi.Truncate(line, width, "…")
+		}
+		return sty.Tool.GrepMatchCount.Width(width).Render(line)
+	}
+
+	// File path lines (end with ":")
+	if strings.HasSuffix(strings.TrimSpace(line), ":") && !strings.Contains(line, "Line ") {
+		if lipgloss.Width(line) > width {
+			line = ansi.Truncate(line, width, "…")
+		}
+		return sty.Tool.GrepFilePath.Width(width).Render(line)
+	}
+
+	// Match lines: "  Line X, Char Y: content"
+	if matches := grepLineInfoRegex.FindStringSubmatch(line); matches != nil {
+		indent := matches[1]
+		lineInfo := matches[2]
+		matchContent := matches[3]
+
+		styledLineInfo := sty.Tool.GrepLineInfo.Render(indent + lineInfo)
+		styledContent := highlightMatches(sty, matchContent, matchRegex)
+		combined := styledLineInfo + styledContent
+
+		if lipgloss.Width(combined) > width {
+			combined = ansi.Truncate(combined, width, "…")
+		}
+		return combined
+	}
+
+	// Default: plain content line
+	if lipgloss.Width(line) > width {
+		line = ansi.Truncate(line, width, "…")
+	}
+	return sty.Tool.ContentLine.Width(width).Render(line)
+}
+
+// highlightMatches highlights regex matches in the content.
+func highlightMatches(sty *styles.Styles, content string, matchRegex *regexp.Regexp) string {
+	if matchRegex == nil {
+		return sty.Tool.GrepContent.Render(content)
+	}
+
+	// Find all match locations
+	matches := matchRegex.FindAllStringIndex(content, -1)
+	if len(matches) == 0 {
+		return sty.Tool.GrepContent.Render(content)
+	}
+
+	var result strings.Builder
+	lastEnd := 0
+
+	for _, match := range matches {
+		start, end := match[0], match[1]
+		// Add non-matching text before this match
+		if start > lastEnd {
+			result.WriteString(sty.Tool.GrepContent.Render(content[lastEnd:start]))
+		}
+		// Add the highlighted match
+		result.WriteString(sty.Tool.GrepMatchHighlight.Render(content[start:end]))
+		lastEnd = end
+	}
+
+	// Add any remaining text after the last match
+	if lastEnd < len(content) {
+		result.WriteString(sty.Tool.GrepContent.Render(content[lastEnd:]))
+	}
+
+	return result.String()
 }
 
 // -----------------------------------------------------------------------------
