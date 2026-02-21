@@ -29,7 +29,25 @@ func (m *UI) modelInfo(width int) string {
 			// Only check reasoning if model can reason
 			if model.CatwalkCfg.CanReason {
 				if len(model.CatwalkCfg.ReasoningLevels) == 0 {
-					if model.ModelCfg.Think {
+					// Mirror coordinator logic: Anthropic models default to thinking ON
+					// unless explicitly disabled in provider options.
+					thinkingEnabled := model.ModelCfg.Think
+					if providerConfig.Type == "anthropic" {
+						// Check if thinking was explicitly disabled in provider options.
+						if thinkOpt, ok := model.ModelCfg.ProviderOptions["thinking"]; ok {
+							if thinkMap, ok := thinkOpt.(map[string]any); ok {
+								if enabled, ok := thinkMap["enabled"].(bool); ok && !enabled {
+									thinkingEnabled = false
+								} else {
+									thinkingEnabled = true
+								}
+							}
+						} else {
+							// No explicit setting - coordinator defaults to ON for Anthropic.
+							thinkingEnabled = true
+						}
+					}
+					if thinkingEnabled {
 						reasoningInfo = "Thinking On"
 					} else {
 						reasoningInfo = "Thinking Off"
