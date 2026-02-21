@@ -193,6 +193,9 @@ func styleGrepLine(sty *styles.Styles, line string, matchRegex *regexp.Regexp, w
 
 	// "Found X matches" or "No files found"
 	if strings.HasPrefix(line, " Found ") || strings.HasPrefix(line, " No files") {
+		if strings.HasPrefix(line, " No files") {
+			line = " No files found ¯\\_(ツ)_/¯"
+		}
 		if lipgloss.Width(line) > width {
 			line = ansi.Truncate(line, width, "…")
 		}

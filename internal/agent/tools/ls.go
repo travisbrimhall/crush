@@ -217,33 +217,41 @@ func createFileTree(sortedPaths []string, rootPath string) []*TreeNode {
 func printTree(tree []*TreeNode, rootPath string) string {
 	var result strings.Builder
 
-	result.WriteString("- ")
 	result.WriteString(filepath.ToSlash(rootPath))
 	if rootPath[len(rootPath)-1] != '/' {
 		result.WriteByte('/')
 	}
 	result.WriteByte('\n')
 
-	for _, node := range tree {
-		printNode(&result, node, 1)
+	for i, node := range tree {
+		isLast := i == len(tree)-1
+		printNode(&result, node, "", isLast)
 	}
 
 	return result.String()
 }
 
-func printNode(builder *strings.Builder, node *TreeNode, level int) {
-	indent := strings.Repeat("  ", level)
+func printNode(builder *strings.Builder, node *TreeNode, prefix string, isLast bool) {
+	connector := "├── "
+	if isLast {
+		connector = "└── "
+	}
 
 	nodeName := node.Name
 	if node.Type == NodeTypeDirectory {
 		nodeName = nodeName + "/"
 	}
 
-	fmt.Fprintf(builder, "%s- %s\n", indent, nodeName)
+	fmt.Fprintf(builder, "%s%s%s\n", prefix, connector, nodeName)
 
 	if node.Type == NodeTypeDirectory && len(node.Children) > 0 {
-		for _, child := range node.Children {
-			printNode(builder, child, level+1)
+		childPrefix := prefix + "│   "
+		if isLast {
+			childPrefix = prefix + "    "
+		}
+		for i, child := range node.Children {
+			childIsLast := i == len(node.Children)-1
+			printNode(builder, child, childPrefix, childIsLast)
 		}
 	}
 }

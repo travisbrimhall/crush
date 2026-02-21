@@ -773,8 +773,7 @@ func DefaultStyles() Styles {
 					Color: stringPtr(charmtone.Smoke.Hex()),
 				},
 				Error: ansi.StylePrimitive{
-					Color:           stringPtr(charmtone.Butter.Hex()),
-					BackgroundColor: stringPtr(charmtone.Sriracha.Hex()),
+					Color: stringPtr(charmtone.Butter.Hex()),
 				},
 				Comment: ansi.StylePrimitive{
 					Color: stringPtr(charmtone.Oyster.Hex()),
