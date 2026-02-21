@@ -67,8 +67,8 @@ type DaemonTasksConfig struct {
 }
 
 type taskState struct {
-	task    DaemonTask
-	lastRun time.Time
+	task     DaemonTask
+	lastRun  time.Time
 	interval time.Duration
 }
 

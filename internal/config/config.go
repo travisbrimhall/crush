@@ -290,7 +290,6 @@ type Options struct {
 	UnbanCommands             []string     `json:"unban_commands,omitempty" jsonschema:"description=Commands to remove from the default banned commands list,example=ssh,example=curl,example=wget"`
 	OllamaURL                 string       `json:"ollama_url,omitempty" jsonschema:"description=URL for Ollama server to enable semantic memory search,example=http://localhost:11434,example=http://mac-studio.local:11434"`
 	OllamaEmbedModel          string       `json:"ollama_embed_model,omitempty" jsonschema:"description=Ollama model for embeddings,default=all-minilm,example=all-minilm,example=nomic-embed-text"`
-	DisableTidy               bool         `json:"disable_tidy,omitempty" jsonschema:"description=Disable background context tidying (compression of old tool outputs),default=false"`
 }
 
 type MCPs map[string]MCPConfig

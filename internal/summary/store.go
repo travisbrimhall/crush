@@ -212,9 +212,9 @@ func (s *Store) rowToSummary(row db.SessionSummary) *Summary {
 
 func containsIgnoreCase(s, substr string) bool {
 	// Simple case-insensitive contains.
-	return len(s) >= len(substr) && 
-		(substr == "" || 
-		 (len(s) > 0 && containsLower(toLower(s), toLower(substr))))
+	return len(s) >= len(substr) &&
+		(substr == "" ||
+			(len(s) > 0 && containsLower(toLower(s), toLower(substr))))
 }
 
 func toLower(s string) string {

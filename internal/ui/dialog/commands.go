@@ -397,7 +397,6 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	if c.hasSession {
 		commands = append(commands,
 			NewCommandItem(c.com.Styles, "summarize", "Summarize Session", "", ActionSummarize{SessionID: c.sessionID}),
-			NewCommandItem(c.com.Styles, "run_tidy", "Run Tidy", "", ActionRunTidy{SessionID: c.sessionID}),
 			NewCommandItem(c.com.Styles, "context", "View/Edit Context", "", ActionOpenDialog{ContextID}),
 		)
 	}

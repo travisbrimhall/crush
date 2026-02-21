@@ -52,18 +52,18 @@ type Prompt struct {
 }
 
 type PromptDat struct {
-	Provider         string
-	Model            string
-	Config           config.Config
-	WorkingDir       string
-	IsGitRepo        bool
-	Platform         string
-	DateTime         string
-	GitStatus        string
-	ContextFiles     []ContextFile
-	AvailSkillXML    string
-	LearnedMemories  string
-	RecentSummaries  string
+	Provider        string
+	Model           string
+	Config          config.Config
+	WorkingDir      string
+	IsGitRepo       bool
+	Platform        string
+	DateTime        string
+	GitStatus       string
+	ContextFiles    []ContextFile
+	AvailSkillXML   string
+	LearnedMemories string
+	RecentSummaries string
 }
 
 type ContextFile struct {

@@ -89,7 +89,6 @@ type SessionAgent interface {
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string, fantasy.ProviderOptions) (string, error)
-	RunTidy(context.Context, string) error
 	Model() Model
 }
 
@@ -115,9 +114,6 @@ type sessionAgent struct {
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
-
-	// tidyManager manages background compression of bulky tool outputs.
-	tidyManager *TidyManager
 }
 
 type SessionAgentOptions struct {
@@ -127,7 +123,6 @@ type SessionAgentOptions struct {
 	SystemPrompt         string
 	IsSubAgent           bool
 	DisableAutoSummarize bool
-	DisableTidy          bool
 	IsYolo               bool
 	Sessions             session.Service
 	Messages             message.Service
@@ -152,11 +147,6 @@ func NewSessionAgent(
 		lspManager:           opts.LSPManager,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
-	}
-
-	// Only enable tidy for main agents (not sub-agents) when not disabled.
-	if !opts.IsSubAgent && !opts.DisableTidy {
-		a.tidyManager = NewTidyManager()
 	}
 
 	return a
@@ -291,13 +281,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			// Deduplicate repeated file contents to reduce token usage.
 			DedupeToolOutputs(prepared.Messages)
-
-			// Apply any cached tidy compressions from background processing.
-			if a.tidyManager != nil {
-				ApplyTidyCompressions(prepared.Messages, func(toolCallID string) (string, bool) {
-					return a.tidyManager.GetCompression(call.SessionID, toolCallID)
-				})
-			}
 
 			// Inject template context as system message (cacheable).
 			if call.TemplateContext != "" {
@@ -714,14 +697,6 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	// Extract and return the summary text.
 	summaryText := summaryMessage.Content().Text
 	return summaryText, nil
-}
-
-func (a *sessionAgent) RunTidy(ctx context.Context, sessionID string) error {
-	if a.tidyManager == nil {
-		return errors.New("tidy is not enabled")
-	}
-	a.tidyManager.RunNow(ctx, sessionID, a.buildTidyRunner(sessionID))
-	return nil
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
@@ -1263,66 +1238,4 @@ func buildSummaryPrompt(todos []session.Todo) string {
 		sb.WriteString("Instruct the resuming assistant to use the `todos` tool to continue tracking progress on these tasks.")
 	}
 	return sb.String()
-}
-
-// buildTidyRunner creates the function that runs the tidy subagent.
-// It captures the session ID and uses the small model to compress bulky tool outputs.
-func (a *sessionAgent) buildTidyRunner(sessionID string) func(context.Context) (map[string]string, error) {
-	return func(ctx context.Context) (map[string]string, error) {
-		// Get current session and messages.
-		currentSession, err := a.sessions.Get(ctx, sessionID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get session: %w", err)
-		}
-
-		msgs, err := a.getSessionMessages(ctx, currentSession)
-		if err != nil {
-			return nil, err
-		}
-
-		// Convert to fantasy messages for candidate finding.
-		aiMsgs, _ := a.preparePrompt(msgs)
-
-		// Find candidates for compression.
-		candidates := FindTidyCandidates(aiMsgs)
-		if len(candidates) == 0 {
-			return nil, nil
-		}
-
-		// Build the tidy prompt.
-		tidyPrompt, err := BuildTidyPrompt(candidates)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build tidy prompt: %w", err)
-		}
-
-		// Use large model to analyze and compress.
-		largeModel := a.largeModel.Get()
-		agent := fantasy.NewAgent(largeModel.Model,
-			fantasy.WithMaxOutputTokens(2000),
-		)
-
-		result, err := agent.Generate(ctx, fantasy.AgentCall{
-			Prompt: tidyPrompt,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("tidy agent failed: %w", err)
-		}
-
-		// Parse response to get compressions.
-		compressions, err := ParseTidyResponse(result.Response.Content.Text())
-		if err != nil {
-			slog.Debug("Failed to parse tidy response", "error", err)
-			return nil, nil // Non-fatal.
-		}
-
-		// Build the result map.
-		resultMap := make(map[string]string)
-		for _, c := range compressions {
-			if c.Summary != "" {
-				resultMap[c.ToolCallID] = c.Summary
-			}
-		}
-
-		return resultMap, nil
-	}
 }

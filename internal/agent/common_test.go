@@ -160,7 +160,6 @@ func testSessionAgent(env fakeEnv, large, small fantasy.LanguageModel, systemPro
 		SystemPrompt:         systemPrompt,
 		IsSubAgent:           false,
 		DisableAutoSummarize: false,
-		DisableTidy:          true,
 		IsYolo:               true,
 		Sessions:             env.sessions,
 		Messages:             env.messages,
