@@ -749,9 +749,14 @@ func applyCacheMarkers(messages []fantasy.Message, hasSummary bool, cacheOpts fa
 		}
 	}
 
-	// Mark the last 2 messages.
+	// Mark the last 2 messages (or last 1 if hasSummary to stay under
+	// Anthropic's 4-block cache_control limit).
+	markCount := 2
+	if hasSummary {
+		markCount = 1
+	}
 	for i := range messages {
-		if i > len(messages)-3 {
+		if i > len(messages)-markCount-1 {
 			messages[i].ProviderOptions = cacheOpts
 		}
 	}

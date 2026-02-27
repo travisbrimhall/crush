@@ -86,7 +86,8 @@ func TestApplyCacheMarkers(t *testing.T) {
 		assert.True(t, hasCacheMarker(messages[0]), "system should be marked")
 		assert.True(t, hasCacheMarker(messages[1]), "summary (first user) should be marked")
 		assert.False(t, hasCacheMarker(messages[2]), "first assistant should not be marked")
-		assert.True(t, hasCacheMarker(messages[3]), "second-to-last should be marked")
+		// With summary, only mark last 1 msg (not 2) to stay under Anthropic's 4-block limit.
+		assert.False(t, hasCacheMarker(messages[3]), "second-to-last should not be marked with summary")
 		assert.True(t, hasCacheMarker(messages[4]), "last should be marked")
 	})
 
@@ -163,7 +164,8 @@ func TestApplyCacheMarkers(t *testing.T) {
 		applyCacheMarkers(messages, true, cacheOpts)
 
 		assert.True(t, hasCacheMarker(messages[0]), "summary should be marked")
-		assert.True(t, hasCacheMarker(messages[1]), "second-to-last should be marked")
+		// With summary, only mark last 1 msg to stay under Anthropic's 4-block limit.
+		assert.False(t, hasCacheMarker(messages[1]), "second-to-last should not be marked with summary")
 		assert.True(t, hasCacheMarker(messages[2]), "last should be marked")
 	})
 }
