@@ -8,7 +8,6 @@
 package agent
 
 import (
-	"cmp"
 	"context"
 	_ "embed"
 	"encoding/base64"
@@ -26,22 +25,15 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
-	"charm.land/fantasy/providers/google"
-	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/session"
-	"github.com/charmbracelet/crush/internal/stringext"
-	"github.com/charmbracelet/x/exp/charmtone"
 )
 
 const (
@@ -160,7 +152,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		return nil, ErrSessionMissing
 	}
 
-	// Queue the message if busy
+	// Queue the message if busy.
 	if a.IsSessionBusy(call.SessionID) {
 		existing, ok := a.messageQueue.Get(call.SessionID)
 		if !ok {
@@ -171,52 +163,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		return nil, nil
 	}
 
-	// Copy mutable fields under lock to avoid races with SetTools/SetModels.
-	agentTools := a.tools.Copy()
-	largeModel := a.largeModel.Get()
-	systemPrompt := a.systemPrompt.Get()
-	promptPrefix := a.systemPromptPrefix.Get()
-	var instructions strings.Builder
-
-	for _, server := range mcp.GetStates() {
-		if server.State != mcp.StateConnected {
-			continue
-		}
-		if s := server.Client.InitializeResult().Instructions; s != "" {
-			instructions.WriteString(s)
-			instructions.WriteString("\n\n")
-		}
-	}
-
-	if s := instructions.String(); s != "" {
-		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
-	}
-
-	if len(agentTools) > 0 {
-		// Add Anthropic caching to the last tool.
-		agentTools[len(agentTools)-1].SetProviderOptions(a.getCacheControlOptions())
-	}
-
-	agent := fantasy.NewAgent(
-		largeModel.Model,
-		fantasy.WithSystemPrompt(systemPrompt),
-		fantasy.WithTools(agentTools...),
-	)
-
-	sessionLock := sync.Mutex{}
-	currentSession, err := a.sessions.Get(ctx, call.SessionID)
+	// Build run state - captures all config and session state.
+	state, agent, err := a.buildRunState(ctx, call)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get session: %w", err)
-	}
-
-	msgs, err := a.getSessionMessages(ctx, currentSession)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get session messages: %w", err)
+		return nil, err
 	}
 
 	var wg sync.WaitGroup
 	// Generate title if first message.
-	if len(msgs) == 0 {
+	if state.IsFirstMessage() {
 		titleCtx := ctx // Copy to avoid race with ctx reassignment below.
 		wg.Go(func() {
 			a.generateTitle(titleCtx, call.SessionID, call.Prompt)
@@ -239,323 +194,28 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	defer cancel()
 	defer a.activeRequests.Del(call.SessionID)
 
-	history, files := a.preparePrompt(msgs, call.Attachments...)
-
-	// Track if session has a summary - used to cache the summary message.
-	hasSummary := currentSession.SummaryMessageID != ""
-
-	startTime := time.Now()
+	state.StartTime = time.Now()
 	a.eventPromptSent(call.SessionID)
 
-	var currentAssistant *message.Message
-	var shouldSummarize bool
-	var lspBatcher *lsp.Batcher
-	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
-		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
-		Files:            files,
-		Messages:         history,
-		ProviderOptions:  call.ProviderOptions,
-		MaxOutputTokens:  &call.MaxOutputTokens,
-		TopP:             call.TopP,
-		Temperature:      call.Temperature,
-		PresencePenalty:  call.PresencePenalty,
-		TopK:             call.TopK,
-		FrequencyPenalty: call.FrequencyPenalty,
-		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = options.Messages
-			for i := range prepared.Messages {
-				prepared.Messages[i].ProviderOptions = nil
-			}
+	// Create step handler and stream runner for callback delegation.
+	handler := NewStepHandler(state, a, a.messages, a.sessions, a.lspManager)
+	runner := NewStreamRunner(agent, handler, state, call, a.disableAutoSummarize)
 
-			queuedCalls, _ := a.messageQueue.Get(call.SessionID)
-			a.messageQueue.Del(call.SessionID)
-			for _, queued := range queuedCalls {
-				userMessage, createErr := a.createUserMessage(callContext, queued)
-				if createErr != nil {
-					return callContext, prepared, createErr
-				}
-				prepared.Messages = append(prepared.Messages, userMessage.ToAIMessage()...)
-			}
+	result, err := runner.Run(ctx, genCtx)
 
-			prepared.Messages = a.workaroundProviderMediaLimitations(prepared.Messages, largeModel)
-
-			// Deduplicate repeated file contents to reduce token usage.
-			DedupeToolOutputs(prepared.Messages)
-
-			// Inject template context as system message (cacheable).
-			if call.TemplateContext != "" {
-				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(call.TemplateContext)}, prepared.Messages...)
-			}
-
-			if promptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(promptPrefix)}, prepared.Messages...)
-			}
-
-			// Apply cache control markers AFTER all messages are assembled.
-			applyCacheMarkers(prepared.Messages, hasSummary, a.getCacheControlOptions())
-
-			var assistantMsg message.Message
-			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
-				Role:     message.Assistant,
-				Parts:    []message.ContentPart{},
-				Model:    largeModel.ModelCfg.Model,
-				Provider: largeModel.ModelCfg.Provider,
-			})
-			if err != nil {
-				return callContext, prepared, err
-			}
-			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
-			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
-			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
-
-			// Create LSP batcher for this step to batch file notifications.
-			if a.lspManager != nil {
-				lspBatcher = lsp.NewBatcher(a.lspManager)
-				callContext = tools.WithLSPBatcher(callContext, lspBatcher)
-			}
-
-			currentAssistant = &assistantMsg
-			return callContext, prepared, err
-		},
-		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
-			currentAssistant.AppendReasoningContent(reasoning.Text)
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnReasoningDelta: func(id string, text string) error {
-			currentAssistant.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
-			// handle anthropic signature
-			if anthropicData, ok := reasoning.ProviderMetadata[anthropic.Name]; ok {
-				if reasoning, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok {
-					currentAssistant.AppendReasoningSignature(reasoning.Signature)
-				}
-			}
-			if googleData, ok := reasoning.ProviderMetadata[google.Name]; ok {
-				if reasoning, ok := googleData.(*google.ReasoningMetadata); ok {
-					currentAssistant.AppendThoughtSignature(reasoning.Signature, reasoning.ToolID)
-				}
-			}
-			if openaiData, ok := reasoning.ProviderMetadata[openai.Name]; ok {
-				if reasoning, ok := openaiData.(*openai.ResponsesReasoningMetadata); ok {
-					currentAssistant.SetReasoningResponsesData(reasoning)
-				}
-			}
-			currentAssistant.FinishThinking()
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnTextDelta: func(id string, text string) error {
-			// Strip leading newline from initial text content. This is is
-			// particularly important in non-interactive mode where leading
-			// newlines are very visible.
-			if len(currentAssistant.Parts) == 0 {
-				text = strings.TrimPrefix(text, "\n")
-			}
-
-			currentAssistant.AppendContent(text)
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnToolInputStart: func(id string, toolName string) error {
-			toolCall := message.ToolCall{
-				ID:               id,
-				Name:             toolName,
-				ProviderExecuted: false,
-				Finished:         false,
-			}
-			currentAssistant.AddToolCall(toolCall)
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
-			// TODO: implement
-		},
-		OnToolCall: func(tc fantasy.ToolCallContent) error {
-			toolCall := message.ToolCall{
-				ID:               tc.ToolCallID,
-				Name:             tc.ToolName,
-				Input:            tc.Input,
-				ProviderExecuted: false,
-				Finished:         true,
-			}
-			currentAssistant.AddToolCall(toolCall)
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		OnToolResult: func(result fantasy.ToolResultContent) error {
-			toolResult := a.convertToToolResult(result)
-			_, createMsgErr := a.messages.Create(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
-				Role: message.Tool,
-				Parts: []message.ContentPart{
-					toolResult,
-				},
-			})
-			return createMsgErr
-		},
-		OnStepFinish: func(stepResult fantasy.StepResult) error {
-			// Flush LSP batcher to notify all files and wait for diagnostics once.
-			if lspBatcher != nil {
-				lspBatcher.Flush(genCtx)
-				lspBatcher = nil
-			}
-
-			finishReason := message.FinishReasonUnknown
-			switch stepResult.FinishReason {
-			case fantasy.FinishReasonLength:
-				finishReason = message.FinishReasonMaxTokens
-			case fantasy.FinishReasonStop:
-				finishReason = message.FinishReasonEndTurn
-			case fantasy.FinishReasonToolCalls:
-				finishReason = message.FinishReasonToolUse
-			}
-			currentAssistant.AddFinish(finishReason, "", "")
-			sessionLock.Lock()
-			defer sessionLock.Unlock()
-
-			updatedSession, getSessionErr := a.sessions.Get(ctx, call.SessionID)
-			if getSessionErr != nil {
-				return getSessionErr
-			}
-			a.updateSessionUsage(largeModel, &updatedSession, stepResult.Usage, a.openrouterCost(stepResult.ProviderMetadata))
-			_, sessionErr := a.sessions.Save(ctx, updatedSession)
-			if sessionErr != nil {
-				return sessionErr
-			}
-			currentSession = updatedSession
-			return a.messages.Update(genCtx, *currentAssistant)
-		},
-		StopWhen: []fantasy.StopCondition{
-			func(_ []fantasy.StepResult) bool {
-				cw := int64(largeModel.CatwalkCfg.ContextWindow)
-				tokens := currentSession.CompletionTokens + currentSession.PromptTokens
-				remaining := cw - tokens
-				var threshold int64
-				if cw > largeContextWindowThreshold {
-					threshold = largeContextWindowBuffer
-				} else {
-					threshold = int64(float64(cw) * smallContextWindowRatio)
-				}
-				if (remaining <= threshold) && !a.disableAutoSummarize {
-					shouldSummarize = true
-					return true
-				}
-				return false
-			},
-			func(steps []fantasy.StepResult) bool {
-				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
-			},
-		},
-	})
-
-	a.eventPromptResponded(call.SessionID, time.Since(startTime).Truncate(time.Second))
+	a.eventPromptResponded(call.SessionID, time.Since(state.StartTime).Truncate(time.Second))
 
 	if err != nil {
-		isCancelErr := errors.Is(err, context.Canceled)
-		isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
-		if currentAssistant == nil {
-			return result, err
-		}
-		// Ensure we finish thinking on error to close the reasoning state.
-		currentAssistant.FinishThinking()
-		toolCalls := currentAssistant.ToolCalls()
-		// INFO: we use the parent context here because the genCtx has been cancelled.
-		msgs, createErr := a.messages.List(ctx, currentAssistant.SessionID)
-		if createErr != nil {
-			return nil, createErr
-		}
-		for _, tc := range toolCalls {
-			if !tc.Finished {
-				tc.Finished = true
-				tc.Input = "{}"
-				currentAssistant.AddToolCall(tc)
-				updateErr := a.messages.Update(ctx, *currentAssistant)
-				if updateErr != nil {
-					return nil, updateErr
-				}
-			}
-
-			found := false
-			for _, msg := range msgs {
-				if msg.Role == message.Tool {
-					for _, tr := range msg.ToolResults() {
-						if tr.ToolCallID == tc.ID {
-							found = true
-							break
-						}
-					}
-				}
-				if found {
-					break
-				}
-			}
-			if found {
-				continue
-			}
-			content := "There was an error while executing the tool"
-			if isCancelErr {
-				content = "Tool execution canceled by user"
-			} else if isPermissionErr {
-				content = "User denied permission"
-			}
-			toolResult := message.ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Content:    content,
-				IsError:    true,
-			}
-			_, createErr = a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
-				Role: message.Tool,
-				Parts: []message.ContentPart{
-					toolResult,
-				},
-			})
-			if createErr != nil {
-				return nil, createErr
-			}
-		}
-		var fantasyErr *fantasy.Error
-		var providerErr *fantasy.ProviderError
-		const defaultTitle = "Provider Error"
-		linkStyle := lipgloss.NewStyle().Foreground(charmtone.Guac).Underline(true)
-		if isCancelErr {
-			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
-		} else if isPermissionErr {
-			currentAssistant.AddFinish(message.FinishReasonPermissionDenied, "User denied permission", "")
-		} else if errors.Is(err, hyper.ErrNoCredits) {
-			url := hyper.BaseURL()
-			link := linkStyle.Hyperlink(url, "id=hyper").Render(url)
-			currentAssistant.AddFinish(message.FinishReasonError, "No credits", "You're out of credits. Add more at "+link)
-		} else if errors.As(err, &providerErr) {
-			if providerErr.Message == "The requested model is not supported." {
-				url := "https://github.com/settings/copilot/features"
-				link := linkStyle.Hyperlink(url, "id=copilot").Render(url)
-				currentAssistant.AddFinish(
-					message.FinishReasonError,
-					"Copilot model not enabled",
-					fmt.Sprintf("%q is not enabled in Copilot. Go to the following page to enable it. Then, wait 5 minutes before trying again. %s", largeModel.CatwalkCfg.Name, link),
-				)
-			} else {
-				currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message)
-			}
-		} else if errors.As(err, &fantasyErr) {
-			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), defaultTitle), fantasyErr.Message)
-		} else {
-			currentAssistant.AddFinish(message.FinishReasonError, defaultTitle, err.Error())
-		}
-		// Note: we use the parent context here because the genCtx has been
-		// cancelled.
-		updateErr := a.messages.Update(ctx, *currentAssistant)
-		if updateErr != nil {
-			return nil, updateErr
-		}
-		return nil, err
+		return result, a.handleStreamError(ctx, state, err)
 	}
 
-	if shouldSummarize {
+	if state.ShouldSummarize {
 		a.activeRequests.Del(call.SessionID)
 		if _, summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
 			return nil, summarizeErr
 		}
 		// If the agent wasn't done...
-		if len(currentAssistant.ToolCalls()) > 0 {
+		if len(state.CurrentAssistant.ToolCalls()) > 0 {
 			existing, ok := a.messageQueue.Get(call.SessionID)
 			if !ok {
 				existing = []SessionAgentCall{}
@@ -815,6 +475,74 @@ If not, please feel free to ignore. Again do not mention this message to the use
 	}
 
 	return history, files
+}
+
+// buildRunState creates the RunState and fantasy.Agent for a Run() call.
+// It copies mutable fields under lock and prepares all config needed for streaming.
+func (a *sessionAgent) buildRunState(ctx context.Context, call SessionAgentCall) (*RunState, fantasy.Agent, error) {
+	// Copy mutable fields under lock to avoid races with SetTools/SetModels.
+	agentTools := a.tools.Copy()
+	largeModel := a.largeModel.Get()
+	systemPrompt := a.systemPrompt.Get()
+	promptPrefix := a.systemPromptPrefix.Get()
+
+	// Append MCP instructions to system prompt.
+	var instructions strings.Builder
+	for _, server := range mcp.GetStates() {
+		if server.State != mcp.StateConnected {
+			continue
+		}
+		if s := server.Client.InitializeResult().Instructions; s != "" {
+			instructions.WriteString(s)
+			instructions.WriteString("\n\n")
+		}
+	}
+	if s := instructions.String(); s != "" {
+		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
+	}
+
+	// Add Anthropic caching to the last tool.
+	if len(agentTools) > 0 {
+		agentTools[len(agentTools)-1].SetProviderOptions(a.getCacheControlOptions())
+	}
+
+	// Fetch current session.
+	currentSession, err := a.sessions.Get(ctx, call.SessionID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// Get message history.
+	msgs, err := a.getSessionMessages(ctx, currentSession)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get session messages: %w", err)
+	}
+
+	// Prepare prompt history and files.
+	history, files := a.preparePrompt(msgs, call.Attachments...)
+
+	// Build state.
+	state := &RunState{
+		Call:         call,
+		Session:      currentSession,
+		Model:        largeModel,
+		SystemPrompt: systemPrompt,
+		PromptPrefix: promptPrefix,
+		Tools:        agentTools,
+		HasSummary:   currentSession.SummaryMessageID != "",
+		ParentCtx:    ctx,
+		History:      history,
+		Files:        files,
+	}
+
+	// Build agent.
+	agent := fantasy.NewAgent(
+		largeModel.Model,
+		fantasy.WithSystemPrompt(systemPrompt),
+		fantasy.WithTools(agentTools...),
+	)
+
+	return state, agent, nil
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {
