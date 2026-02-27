@@ -14,6 +14,8 @@ import (
 // RunState holds mutable state for a single Run() invocation.
 // All fields are owned by the current goroutine during streaming.
 // This replaces closure-captured variables for explicit state management.
+//
+// RunState is single-use per Run() invocation. Do not reuse across calls.
 type RunState struct {
 	// Immutable after creation.
 	Call         SessionAgentCall
