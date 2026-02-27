@@ -188,6 +188,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// Add the session to the context.
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
 
+	// Lifecycle: activeRequests entry must remain until all post-stream work
+	// completes (error handling, summarization, queue replay). The defer
+	// ensures cleanup happens after recursive calls return.
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(call.SessionID, cancel)
 
@@ -210,11 +213,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	}
 
 	if state.ShouldSummarize {
-		a.activeRequests.Del(call.SessionID)
-		if _, summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
+		// Use parent ctx for summarize - genCtx may be cancelled from stream completion.
+		if _, summarizeErr := a.Summarize(ctx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
 			return nil, summarizeErr
 		}
-		// If the agent wasn't done...
+		// If the agent wasn't done (had pending tool calls), queue continuation.
 		if len(state.CurrentAssistant.ToolCalls()) > 0 {
 			existing, ok := a.messageQueue.Get(call.SessionID)
 			if !ok {
@@ -226,15 +229,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 	}
 
-	// Release active request before processing queued messages.
-	a.activeRequests.Del(call.SessionID)
-	cancel()
-
+	// Process queued messages. Lifecycle note: activeRequests entry is cleaned
+	// up by defer above, which runs after this returns.
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 	if !ok || len(queuedMessages) == 0 {
 		return result, err
 	}
-	// There are queued messages restart the loop.
+
+	// Recursive queue replay. Important: pass ctx (parent), not genCtx (cancelled).
+	// Do not convert to iteration without updating golden orchestration tests.
 	firstQueuedMessage := queuedMessages[0]
 	a.messageQueue.Set(call.SessionID, queuedMessages[1:])
 	return a.Run(ctx, firstQueuedMessage)
