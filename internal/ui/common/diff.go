@@ -11,6 +11,6 @@ import (
 func DiffFormatter(s *styles.Styles) *diffview.DiffView {
 	formatDiff := diffview.New()
 	style := chroma.MustNewStyle("crush", s.ChromaTheme())
-	diff := formatDiff.ChromaStyle(style).Style(s.Diff).TabWidth(4)
+	diff := formatDiff.ChromaStyle(style).Style(s.Diff).TabWidth(4).ContextLines(5)
 	return diff
 }

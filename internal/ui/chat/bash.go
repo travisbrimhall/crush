@@ -11,12 +11,20 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/stringext"
+	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 )
 
 // bashGrepLineRegex matches grep output lines: "path:linenum:content".
 var bashGrepLineRegex = regexp.MustCompile(`^(.+?):(\d+):(.*)$`)
+
+// sqlKeywords are SQL keywords used to detect SQL output.
+var sqlKeywords = []string{
+	"CREATE TABLE", "CREATE INDEX", "CREATE TRIGGER",
+	"ALTER TABLE", "DROP TABLE", "INSERT INTO",
+	"SELECT ", "UPDATE ", "DELETE FROM",
+}
 
 // isBashGrepCommand checks if a command is a grep command with line numbers.
 func isBashGrepCommand(cmd string) bool {
@@ -185,9 +193,12 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
 	var bodyContent string
-	if isBashGrepCommand(params.Command) {
+	switch {
+	case isBashGrepCommand(params.Command):
 		bodyContent = styleBashGrepOutput(sty, output, bodyWidth, opts.ExpandedContent)
-	} else {
+	case isSQLiteCommand(params.Command) || looksLikeSQL(output):
+		bodyContent = styleBashSQLOutput(sty, output, bodyWidth, opts.ExpandedContent)
+	default:
 		bodyContent = toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent)
 	}
 	body := sty.Tool.Body.Render(bodyContent)
@@ -344,4 +355,68 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 // joinToolParts joins header and body with a blank line separator.
 func joinToolParts(header, body string) string {
 	return strings.Join([]string{header, "", body}, "\n")
+}
+
+// isSQLiteCommand checks if a command is a sqlite3 command.
+func isSQLiteCommand(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	return strings.HasPrefix(cmd, "sqlite3 ")
+}
+
+// looksLikeSQL checks if output looks like SQL (CREATE TABLE, etc.).
+// Only scans the first 1KB to avoid overhead on large outputs.
+func looksLikeSQL(output string) bool {
+	// Limit scan to first 1KB for performance.
+	if len(output) > 1024 {
+		output = output[:1024]
+	}
+	upper := strings.ToUpper(output)
+	for _, kw := range sqlKeywords {
+		if strings.Contains(upper, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// styleBashSQLOutput applies SQL syntax highlighting to bash output.
+func styleBashSQLOutput(sty *styles.Styles, output string, width int, expanded bool) string {
+	output = stringext.NormalizeSpace(output)
+	lines := strings.Split(output, "\n")
+
+	maxLines := responseContextHeight
+	if expanded {
+		maxLines = len(lines)
+	}
+
+	displayLines := lines
+	if len(lines) > maxLines {
+		displayLines = lines[:maxLines]
+	}
+
+	bg := sty.Tool.ContentCodeBg
+	highlighted, err := common.SyntaxHighlight(sty, strings.Join(displayLines, "\n"), "schema.sql", bg)
+	if err != nil {
+		// Fallback to plain content on error.
+		return toolOutputPlainContent(sty, output, width, expanded)
+	}
+
+	highlightedLines := strings.Split(highlighted, "\n")
+
+	var out []string
+	for _, ln := range highlightedLines {
+		ln = " " + ln
+		if lipgloss.Width(ln) > width {
+			ln = ansi.Truncate(ln, width, "…")
+		}
+		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
+	}
+
+	if len(lines) > maxLines && !expanded {
+		out = append(out, sty.Tool.ContentTruncation.
+			Width(width).
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)))
+	}
+
+	return strings.Join(out, "\n")
 }

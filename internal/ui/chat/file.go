@@ -86,9 +86,8 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		return header
 	}
 
-	// Render code content with syntax highlighting.
-	body := toolOutputCodeContent(sty, params.FilePath, content, params.Offset, cappedWidth, opts.ExpandedContent)
-	return joinToolParts(header, body)
+	// Skip rendering file content snippet - just show header.
+	return header
 }
 
 // -----------------------------------------------------------------------------
