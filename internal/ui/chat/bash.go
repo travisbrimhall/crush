@@ -4,14 +4,107 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/stringext"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// bashGrepLineRegex matches grep output lines: "path:linenum:content".
+var bashGrepLineRegex = regexp.MustCompile(`^(.+?):(\d+):(.*)$`)
+
+// isBashGrepCommand checks if a command is a grep command with line numbers.
+func isBashGrepCommand(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	// Check for grep -n or grep with other flags containing -n.
+	return strings.HasPrefix(cmd, "grep ") && strings.Contains(cmd, "-n")
+}
+
+// styleBashGrepOutput styles bash grep output (path:linenum:content format).
+func styleBashGrepOutput(sty *styles.Styles, output string, width int, expanded bool) string {
+	output = stringext.NormalizeSpace(output)
+	lines := strings.Split(output, "\n")
+
+	maxLines := responseContextHeight
+	if expanded {
+		maxLines = len(lines)
+	}
+
+	var out []string
+	currentFile := ""
+	matchCount := 0
+
+	// First pass: count matches and group by file.
+	for _, ln := range lines {
+		if bashGrepLineRegex.MatchString(ln) {
+			matchCount++
+		}
+	}
+
+	// Add match count header.
+	if matchCount > 0 {
+		countLine := fmt.Sprintf(" Found %d matches", matchCount)
+		out = append(out, sty.Tool.GrepMatchCount.Width(width).Render(countLine))
+	}
+
+	// Second pass: render styled lines.
+	for i, ln := range lines {
+		if i >= maxLines {
+			break
+		}
+
+		if matches := bashGrepLineRegex.FindStringSubmatch(ln); matches != nil {
+			filePath := matches[1]
+			lineNum := matches[2]
+			content := matches[3]
+
+			// Add file header if new file.
+			if filePath != currentFile {
+				if currentFile != "" {
+					out = append(out, "") // blank line between files
+				}
+				currentFile = filePath
+				fileHeader := " " + filePath + ":"
+				if lipgloss.Width(fileHeader) > width {
+					fileHeader = ansi.Truncate(fileHeader, width, "…")
+				}
+				out = append(out, sty.Tool.GrepFilePath.Width(width).Render(fileHeader))
+			}
+
+			// Style the line info and content.
+			lineInfo := fmt.Sprintf("  Line %s:", lineNum)
+			styledLineInfo := sty.Tool.GrepLineInfo.Render(lineInfo)
+			styledContent := sty.Tool.GrepContent.Render(" " + content)
+			combined := styledLineInfo + styledContent
+
+			if lipgloss.Width(combined) > width {
+				combined = ansi.Truncate(combined, width, "…")
+			}
+			out = append(out, combined)
+		} else if strings.TrimSpace(ln) != "" {
+			// Non-matching line (error message, etc.).
+			styled := " " + ln
+			if lipgloss.Width(styled) > width {
+				styled = ansi.Truncate(styled, width, "…")
+			}
+			out = append(out, sty.Tool.ContentLine.Width(width).Render(styled))
+		}
+	}
+
+	wasTruncated := len(lines) > responseContextHeight
+	if !expanded && wasTruncated {
+		out = append(out, sty.Tool.ContentTruncation.
+			Width(width).
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+	}
+
+	return strings.Join(out, "\n")
+}
 
 // -----------------------------------------------------------------------------
 // Bash Tool
@@ -91,7 +184,13 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent))
+	var bodyContent string
+	if isBashGrepCommand(params.Command) {
+		bodyContent = styleBashGrepOutput(sty, output, bodyWidth, opts.ExpandedContent)
+	} else {
+		bodyContent = toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent)
+	}
+	body := sty.Tool.Body.Render(bodyContent)
 	return joinToolParts(header, body)
 }
 
