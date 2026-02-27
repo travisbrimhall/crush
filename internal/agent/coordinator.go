@@ -805,19 +805,16 @@ func (c *coordinator) buildHyperProvider(baseURL, apiKey string) (fantasy.Provid
 	return hyper.New(opts...)
 }
 
-func (c *coordinator) isAnthropicThinking(_ config.SelectedModel) bool {
-	// Thinking is always enabled for Anthropic models.
-	return true
-}
-
 func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model config.SelectedModel, isSubAgent bool) (fantasy.Provider, error) {
 	headers := maps.Clone(providerCfg.ExtraHeaders)
 	if headers == nil {
 		headers = make(map[string]string)
 	}
 
-	// handle special headers for anthropic
-	if providerCfg.Type == anthropic.Name && c.isAnthropicThinking(model) {
+	// Add beta header to enable thinking capability for Anthropic. This header
+	// allows the API to accept thinking options; actual thinking is toggled
+	// per-request in getProviderOptions based on prompt suffix.
+	if providerCfg.Type == anthropic.Name {
 		if v, ok := headers["anthropic-beta"]; ok {
 			headers["anthropic-beta"] = v + ",interleaved-thinking-2025-05-14"
 		} else {
