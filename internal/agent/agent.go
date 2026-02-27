@@ -33,6 +33,7 @@ import (
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/metrics"
 	"github.com/charmbracelet/crush/internal/session"
 )
 
@@ -103,6 +104,7 @@ type sessionAgent struct {
 	disableAutoSummarize bool
 	isYolo               bool
 	lspManager           *lsp.Manager
+	metrics              metrics.Service
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
@@ -120,6 +122,7 @@ type SessionAgentOptions struct {
 	Messages             message.Service
 	Tools                []fantasy.AgentTool
 	LSPManager           *lsp.Manager
+	Metrics              metrics.Service
 }
 
 func NewSessionAgent(
@@ -137,6 +140,7 @@ func NewSessionAgent(
 		tools:                csync.NewSliceFrom(opts.Tools),
 		isYolo:               opts.IsYolo,
 		lspManager:           opts.LSPManager,
+		metrics:              opts.Metrics,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 	}
@@ -201,12 +205,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	a.eventPromptSent(call.SessionID)
 
 	// Create step handler and stream runner for callback delegation.
-	handler := NewStepHandler(state, a, a.messages, a.sessions, a.lspManager)
+	handler := NewStepHandler(state, a, a.messages, a.sessions, a.lspManager, a.metrics)
 	runner := NewStreamRunner(agent, handler, state, call, a.disableAutoSummarize)
 
 	result, err := runner.Run(ctx, genCtx)
 
 	a.eventPromptResponded(call.SessionID, time.Since(state.StartTime).Truncate(time.Second))
+
+	// Record agent run metrics.
+	a.recordAgentRunMetrics(err, state, handler)
 
 	if err != nil {
 		return result, a.handleStreamError(ctx, state, err)
@@ -736,6 +743,31 @@ func (a *sessionAgent) updateSessionUsage(model Model, session *session.Session,
 
 	session.CompletionTokens = usage.OutputTokens
 	session.PromptTokens = usage.InputTokens + usage.CacheReadTokens
+}
+
+// recordAgentRunMetrics records metrics for a completed agent run.
+func (a *sessionAgent) recordAgentRunMetrics(err error, state *RunState, handler *StepHandler) {
+	if a.metrics == nil {
+		return
+	}
+
+	// Record error metrics via handler.
+	if err != nil {
+		handler.RecordError(err)
+	}
+
+	// Determine run status.
+	status := "success"
+	switch {
+	case errors.Is(err, context.Canceled):
+		status = "canceled"
+	case err != nil:
+		status = "error"
+	case state.ShouldSummarize:
+		status = "summarized"
+		a.metrics.IncSummarization()
+	}
+	a.metrics.IncAgentRun(status)
 }
 
 func (a *sessionAgent) Cancel(sessionID string) {

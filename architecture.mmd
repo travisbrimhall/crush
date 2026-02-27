@@ -1,0 +1,71 @@
+flowchart TB
+    subgraph UI["TUI Layer"]
+        Model["ui/model"]
+        Chat["Chat View"]
+        Input["Input Handler"]
+    end
+
+    subgraph Coordinator["Agent Coordinator"]
+        Coord["coordinator"]
+        ProviderOpts["getProviderOptions()"]
+        BuildAgent["buildAgent()"]
+        BuildTools["buildTools()"]
+    end
+
+    subgraph Agent["Session Agent"]
+        SA["sessionAgent"]
+        Run["Run()"]
+        PreparePrompt["preparePrompt()"]
+        Summarize["Summarize()"]
+    end
+
+    subgraph Providers["AI Providers (fantasy)"]
+        Anthropic
+        OpenAI
+        Google
+        Azure
+        Bedrock
+        OpenRouter
+    end
+
+    subgraph Services["Data Services"]
+        Sessions["session.Service"]
+        Messages["message.Service"]
+        Memory["memory.MemoryStore"]
+        LSP["lsp.Manager"]
+        Permissions["permission.Service"]
+    end
+
+    subgraph Tools["Agent Tools"]
+        Bash
+        Grep
+        View
+        Edit
+        Fetch
+        SubAgent["Sub-Agent"]
+    end
+
+    Input -->|"user prompt"| Model
+    Model -->|"Run()"| Coord
+    Coord -->|"mergeCallOptions()"| ProviderOpts
+    Coord -->|"builds"| BuildAgent
+    BuildAgent -->|"creates"| SA
+    Coord -->|"registers"| BuildTools
+    BuildTools --> Tools
+
+    SA -->|"Run()"| Run
+    Run -->|"converts messages"| PreparePrompt
+    Run -->|"streams"| Providers
+    Run -->|"executes"| Tools
+    Run -->|"at 80% context"| Summarize
+
+    Coord -.->|"reads/writes"| Sessions
+    Coord -.->|"reads/writes"| Messages
+    SA -.->|"reads"| Memory
+    SA -.->|"diagnostics"| LSP
+    Tools -.->|"checks"| Permissions
+
+    Providers -->|"streaming response"| SA
+    SA -->|"AgentResult"| Coord
+    Coord -->|"tea.Msg"| Model
+    Model -->|"renders"| Chat

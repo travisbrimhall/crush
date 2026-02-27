@@ -137,6 +137,17 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 
 	go mcp.Initialize(ctx, app.Permissions, cfg)
 
+	// Start metrics HTTP server if configured.
+	if cfg.Options != nil && cfg.Options.MetricsPort > 0 {
+		metricsServer := metrics.NewServer(cfg.Options.MetricsPort, app.Metrics.Registry())
+		if err := metricsServer.Start(); err != nil {
+			slog.Warn("Failed to start metrics server", "error", err)
+		} else {
+			slog.Info("Metrics server started", "port", cfg.Options.MetricsPort)
+			app.cleanupFuncs = append(app.cleanupFuncs, metricsServer.Stop)
+		}
+	}
+
 	// cleanup database upon app shutdown
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,

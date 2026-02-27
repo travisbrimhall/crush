@@ -405,6 +405,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		Messages:             c.messages,
 		Tools:                nil,
 		LSPManager:           c.lspManager,
+		Metrics:              c.metrics,
 	})
 
 	c.readyWg.Go(func() error {

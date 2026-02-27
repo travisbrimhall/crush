@@ -180,5 +180,9 @@ func (r *StreamRunner) autoSummarizeCondition(_ []fantasy.StepResult) bool {
 
 // loopDetectionCondition checks for repeated tool call patterns.
 func (r *StreamRunner) loopDetectionCondition(steps []fantasy.StepResult) bool {
-	return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
+	detected := hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
+	if detected && r.handler.metrics != nil {
+		r.handler.metrics.IncLoopDetection()
+	}
+	return detected
 }

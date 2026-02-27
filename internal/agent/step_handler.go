@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/metrics"
 	"github.com/charmbracelet/crush/internal/session"
 )
 
@@ -24,7 +26,13 @@ type StepHandler struct {
 	messages   message.Service
 	sessions   session.Service
 	lspManager *lsp.Manager
+	metrics    metrics.Service
 	streamCtx  context.Context // Context for streaming operations (may be cancelled).
+
+	// Timing for metrics.
+	stepStartTime  time.Time
+	firstTokenTime time.Time
+	ttftRecorded   bool
 }
 
 // NewStepHandler creates a handler for the given run state.
@@ -34,6 +42,7 @@ func NewStepHandler(
 	msgs message.Service,
 	sess session.Service,
 	lspManager *lsp.Manager,
+	metricsService metrics.Service,
 ) *StepHandler {
 	return &StepHandler{
 		state:      state,
@@ -41,6 +50,7 @@ func NewStepHandler(
 		messages:   msgs,
 		sessions:   sess,
 		lspManager: lspManager,
+		metrics:    metricsService,
 	}
 }
 
@@ -52,12 +62,14 @@ func (h *StepHandler) SetStreamContext(ctx context.Context) {
 
 // OnReasoningStart handles the start of reasoning content.
 func (h *StepHandler) OnReasoningStart(id string, reasoning fantasy.ReasoningContent) error {
+	h.recordFirstToken()
 	h.state.CurrentAssistant.AppendReasoningContent(reasoning.Text)
 	return h.messages.Update(h.streamCtx, *h.state.CurrentAssistant)
 }
 
 // OnReasoningDelta handles incremental reasoning content.
 func (h *StepHandler) OnReasoningDelta(id string, text string) error {
+	h.recordFirstToken()
 	h.state.CurrentAssistant.AppendReasoningContent(text)
 	return h.messages.Update(h.streamCtx, *h.state.CurrentAssistant)
 }
@@ -92,6 +104,8 @@ func (h *StepHandler) extractReasoningSignatures(reasoning fantasy.ReasoningCont
 // OnTextDelta handles incremental text content.
 // Strips leading newline from initial text content.
 func (h *StepHandler) OnTextDelta(id string, text string) error {
+	h.recordFirstToken()
+
 	// Strip leading newline from initial text content. This is particularly
 	// important in non-interactive mode where leading newlines are very visible.
 	if len(h.state.CurrentAssistant.Parts) == 0 {
@@ -103,6 +117,8 @@ func (h *StepHandler) OnTextDelta(id string, text string) error {
 
 // OnToolInputStart handles the start of tool input streaming.
 func (h *StepHandler) OnToolInputStart(id string, toolName string) error {
+	h.recordFirstToken()
+
 	toolCall := message.ToolCall{
 		ID:               id,
 		Name:             toolName,
@@ -138,13 +154,26 @@ func (h *StepHandler) OnToolResult(result fantasy.ToolResultContent) error {
 
 // OnRetry handles retry events from the provider.
 func (h *StepHandler) OnRetry(err *fantasy.ProviderError, delay time.Duration) {
-	// TODO: implement retry handling (emit event, log, etc.)
+	if h.metrics == nil {
+		return
+	}
+
+	provider := h.state.Model.ModelCfg.Provider
+	reason := "unknown"
+	if err != nil {
+		// Use title as reason, normalized to low-cardinality.
+		reason = err.Title
+	}
+	h.metrics.IncAgentRetry(provider, reason)
 }
 
 // OnStepFinish handles the completion of a streaming step.
 // It flushes the LSP batcher, updates the assistant message finish reason,
 // and persists session usage.
 func (h *StepHandler) OnStepFinish(ctx context.Context, stepResult fantasy.StepResult) error {
+	// Record LLM metrics.
+	h.recordStepMetrics(stepResult)
+
 	// Flush LSP batcher to notify all files and wait for diagnostics once.
 	if h.state.LSPBatcher != nil {
 		h.state.LSPBatcher.Flush(h.streamCtx)
@@ -170,6 +199,79 @@ func (h *StepHandler) OnStepFinish(ctx context.Context, stepResult fantasy.StepR
 	return h.messages.Update(h.streamCtx, *h.state.CurrentAssistant)
 }
 
+// recordFirstToken records TTFT metric on first token received.
+func (h *StepHandler) recordFirstToken() {
+	if h.ttftRecorded || h.metrics == nil {
+		return
+	}
+	h.ttftRecorded = true
+	h.firstTokenTime = time.Now()
+
+	if !h.stepStartTime.IsZero() {
+		ttft := h.firstTokenTime.Sub(h.stepStartTime)
+		provider := h.state.Model.ModelCfg.Provider
+		model := h.state.Model.ModelCfg.Model
+		h.metrics.ObserveTimeToFirstToken(provider, model, ttft)
+	}
+}
+
+// recordStepMetrics records LLM request metrics at step completion.
+func (h *StepHandler) recordStepMetrics(stepResult fantasy.StepResult) {
+	if h.metrics == nil {
+		return
+	}
+
+	provider := h.state.Model.ModelCfg.Provider
+	model := h.state.Model.ModelCfg.Model
+
+	// Record request duration.
+	if !h.stepStartTime.IsZero() {
+		duration := time.Since(h.stepStartTime)
+		h.metrics.ObserveLLMRequest(provider, model, duration)
+	}
+
+	// Determine status.
+	status := "success"
+	if stepResult.FinishReason == fantasy.FinishReasonLength {
+		status = "max_tokens"
+	}
+	h.metrics.IncLLMRequest(provider, model, status)
+
+	// Record token usage.
+	usage := stepResult.Usage
+	h.metrics.AddTokens(provider, model, "input", usage.InputTokens)
+	h.metrics.AddTokens(provider, model, "output", usage.OutputTokens)
+	h.metrics.AddTokens(provider, model, "cache_read", usage.CacheReadTokens)
+	h.metrics.AddTokens(provider, model, "cache_write", usage.CacheCreationTokens)
+
+	// Increment step counter.
+	h.metrics.IncAgentStep()
+}
+
+// RecordError records a provider error metric.
+func (h *StepHandler) RecordError(err error) {
+	if h.metrics == nil || err == nil {
+		return
+	}
+
+	// Don't count cancellation as an error.
+	if errors.Is(err, context.Canceled) {
+		h.metrics.IncLLMRequest(h.state.Model.ModelCfg.Provider, h.state.Model.ModelCfg.Model, "canceled")
+		return
+	}
+
+	provider := h.state.Model.ModelCfg.Provider
+	model := h.state.Model.ModelCfg.Model
+
+	var providerErr *fantasy.ProviderError
+	if errors.As(err, &providerErr) {
+		// Use title as error type, normalized to low-cardinality.
+		h.metrics.IncProviderError(provider, providerErr.StatusCode, providerErr.Title)
+	}
+
+	h.metrics.IncLLMRequest(provider, model, "error")
+}
+
 // mapFinishReason converts fantasy.FinishReason to message.FinishReason.
 func (h *StepHandler) mapFinishReason(reason fantasy.FinishReason) message.FinishReason {
 	switch reason {
@@ -191,6 +293,11 @@ func (h *StepHandler) PrepareStep(
 	callContext context.Context,
 	options fantasy.PrepareStepFunctionOptions,
 ) (context.Context, fantasy.PrepareStepResult, error) {
+	// Reset timing for this step.
+	h.stepStartTime = time.Now()
+	h.firstTokenTime = time.Time{}
+	h.ttftRecorded = false
+
 	prepared := fantasy.PrepareStepResult{Messages: options.Messages}
 
 	// Clear provider options from messages.
@@ -207,6 +314,12 @@ func (h *StepHandler) PrepareStep(
 			return callContext, prepared, err
 		}
 		prepared.Messages = append(prepared.Messages, userMessage.ToAIMessage()...)
+	}
+
+	// Update queue depth metric.
+	if h.metrics != nil {
+		remaining, _ := h.agent.messageQueue.Get(h.state.Call.SessionID)
+		h.metrics.SetQueueDepth(h.state.Call.SessionID, len(remaining))
 	}
 
 	// Provider-specific transformations.
