@@ -1,3 +1,4 @@
+// See stream_runner.go for architectural overview and key patterns.
 package agent
 
 import (
