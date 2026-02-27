@@ -202,7 +202,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				SessionID:        session.ID,
 				Prompt:           fullPrompt,
 				MaxOutputTokens:  maxTokens,
-				ProviderOptions:  getProviderOptions(small, smallProviderCfg),
+				ProviderOptions:  getProviderOptions(small, smallProviderCfg, false),
 				Temperature:      small.ModelCfg.Temperature,
 				TopP:             small.ModelCfg.TopP,
 				TopK:             small.ModelCfg.TopK,

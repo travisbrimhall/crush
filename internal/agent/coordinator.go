@@ -182,7 +182,8 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		return nil, errors.New("model provider not configured")
 	}
 
-	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
+	enableThinking := strings.HasSuffix(strings.TrimSpace(prompt), "..")
+	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg, enableThinking)
 
 	if providerCfg.OAuthToken != nil && providerCfg.OAuthToken.IsExpired() {
 		slog.Debug("Token needs to be refreshed", "provider", providerCfg.ID)
@@ -230,7 +231,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 	return result, originalErr
 }
 
-func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
+func getProviderOptions(model Model, providerCfg config.ProviderConfig, enableThinking bool) fantasy.ProviderOptions {
 	options := fantasy.ProviderOptions{}
 
 	cfgOpts := []byte("{}")
@@ -313,9 +314,9 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			}
 		}
 	case anthropic.Name:
-		// Enable thinking by default for Anthropic models.
+		// Enable thinking only when prompt ends with "..".
 		_, hasThink := mergedOptions["thinking"]
-		if !hasThink {
+		if !hasThink && enableThinking {
 			mergedOptions["thinking"] = map[string]any{
 				"budget_tokens": 2000,
 			}
@@ -327,7 +328,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 
 	case openrouter.Name:
 		_, hasReasoning := mergedOptions["reasoning"]
-		if !hasReasoning && model.ModelCfg.ReasoningEffort != "" {
+		if !hasReasoning && enableThinking && model.ModelCfg.ReasoningEffort != "" {
 			mergedOptions["reasoning"] = map[string]any{
 				"enabled": true,
 				"effort":  model.ModelCfg.ReasoningEffort,
@@ -339,7 +340,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		}
 	case vercel.Name:
 		_, hasReasoning := mergedOptions["reasoning"]
-		if !hasReasoning && model.ModelCfg.ReasoningEffort != "" {
+		if !hasReasoning && enableThinking && model.ModelCfg.ReasoningEffort != "" {
 			mergedOptions["reasoning"] = map[string]any{
 				"enabled": true,
 				"effort":  model.ModelCfg.ReasoningEffort,
@@ -351,7 +352,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		}
 	case google.Name:
 		_, hasReasoning := mergedOptions["thinking_config"]
-		if !hasReasoning {
+		if !hasReasoning && enableThinking {
 			mergedOptions["thinking_config"] = map[string]any{
 				"thinking_budget":  2000,
 				"include_thoughts": true,
@@ -375,8 +376,8 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 	return options
 }
 
-func mergeCallOptions(model Model, cfg config.ProviderConfig) (fantasy.ProviderOptions, *float64, *float64, *int64, *float64, *float64) {
-	modelOptions := getProviderOptions(model, cfg)
+func mergeCallOptions(model Model, cfg config.ProviderConfig, enableThinking bool) (fantasy.ProviderOptions, *float64, *float64, *int64, *float64, *float64) {
+	modelOptions := getProviderOptions(model, cfg, enableThinking)
 	temp := cmp.Or(model.ModelCfg.Temperature, model.CatwalkCfg.Options.Temperature)
 	topP := cmp.Or(model.ModelCfg.TopP, model.CatwalkCfg.Options.TopP)
 	topK := cmp.Or(model.ModelCfg.TopK, model.CatwalkCfg.Options.TopK)
@@ -969,7 +970,7 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	if !ok {
 		return errors.New("model provider not configured")
 	}
-	summaryText, err := c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg))
+	summaryText, err := c.currentAgent.Summarize(ctx, sessionID, getProviderOptions(c.currentAgent.Model(), providerCfg, false))
 	if err != nil {
 		return err
 	}
