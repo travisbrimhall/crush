@@ -51,6 +51,11 @@ const (
 	DataIcon    string = "📊"
 	FileIcon    string = "📎"
 
+	// Nerd Font source icons for external integrations.
+	VSCodeIcon string = "󰨞"
+	ChromeIcon string = ""
+	DockerIcon string = ""
+
 	ThinkingIcon string = "🧠"
 
 	ScrollbarThumb string = "┃"
@@ -455,6 +460,10 @@ type Styles struct {
 		Data     lipgloss.Style
 		File     lipgloss.Style
 		Deleting lipgloss.Style
+		// Source-specific icons for external integrations.
+		VSCode lipgloss.Style
+		Chrome lipgloss.Style
+		Docker lipgloss.Style
 	}
 
 	// Pills styles for todo/queue pills
@@ -1400,7 +1409,7 @@ func DefaultStyles() Styles {
 	s.Completions.Match = base.Underline(true)
 
 	// Attachments styles
-	attachmentIconStyle := base.Padding(0, 1)
+	attachmentIconStyle := base.Padding(0, 1).Width(3)
 	s.Attachments.Image = attachmentIconStyle.SetString(ImageIcon)
 	s.Attachments.Text = attachmentIconStyle.SetString(TextIcon)
 	s.Attachments.Code = attachmentIconStyle.SetString(CodeIcon)
@@ -1413,6 +1422,10 @@ func DefaultStyles() Styles {
 	s.Attachments.File = attachmentIconStyle.SetString(FileIcon)
 	s.Attachments.Normal = base.Padding(0, 1).MarginRight(1).Background(fgMuted).Foreground(fgBase)
 	s.Attachments.Deleting = base.Padding(0, 1).Bold(true).Background(red).Foreground(fgBase)
+	// Source-specific icons for external integrations.
+	s.Attachments.VSCode = attachmentIconStyle.SetString(VSCodeIcon)
+	s.Attachments.Chrome = attachmentIconStyle.SetString(ChromeIcon)
+	s.Attachments.Docker = attachmentIconStyle.SetString(DockerIcon)
 
 	// Pills styles
 	s.Pills.Base = base.Padding(0, 1)
