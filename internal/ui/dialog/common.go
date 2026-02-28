@@ -17,7 +17,9 @@ func InputCursor(t *styles.Styles, cur *tea.Cursor) *tea.Cursor {
 		titleStyle := t.Dialog.Title
 		dialogStyle := t.Dialog.View
 		inputStyle := t.Dialog.InputPrompt
-		// Adjust cursor position to account for dialog layout
+		// Adjust cursor position to account for dialog layout.
+		// Only add frame sizes above the cursor (top borders/margins/padding),
+		// not below (bottom sizes would incorrectly push the cursor down).
 		cur.X += inputStyle.GetBorderLeftSize() +
 			inputStyle.GetMarginLeft() +
 			inputStyle.GetPaddingLeft() +
@@ -28,9 +30,6 @@ func InputCursor(t *styles.Styles, cur *tea.Cursor) *tea.Cursor {
 			inputStyle.GetBorderTopSize() +
 			inputStyle.GetMarginTop() +
 			inputStyle.GetPaddingTop() +
-			inputStyle.GetBorderBottomSize() +
-			inputStyle.GetMarginBottom() +
-			inputStyle.GetPaddingBottom() +
 			dialogStyle.GetPaddingTop() +
 			dialogStyle.GetMarginTop() +
 			dialogStyle.GetBorderTopSize()

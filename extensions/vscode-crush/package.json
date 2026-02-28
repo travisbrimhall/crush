@@ -1,0 +1,87 @@
+{
+  "name": "vscode-crush",
+  "displayName": "Crush",
+  "description": "Send diagnostics and test failures to Crush for AI-assisted fixing",
+  "version": "0.1.0",
+  "publisher": "charmbracelet",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/charmbracelet/crush"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "crush.fixDiagnostic",
+        "title": "Fix with Crush",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "crush.fixSelection",
+        "title": "Send to Crush",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "crush.setToken",
+        "title": "Crush: Set Session Token"
+      },
+      {
+        "command": "crush.showStatus",
+        "title": "Crush: Show Connection Status"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "crush.fixSelection",
+          "group": "1_modification@0",
+          "when": "editorHasSelection"
+        }
+      ],
+      "problems/context": [
+        {
+          "command": "crush.fixDiagnostic",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Crush",
+      "properties": {
+        "crush.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:9119",
+          "description": "URL of the Crush context API"
+        },
+        "crush.token": {
+          "type": "string",
+          "default": "",
+          "description": "Session token for Crush API (printed at Crush startup)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -12,7 +12,7 @@ type PromptAdapter struct {
 }
 
 // NewPromptAdapter creates a new adapter for prompt building.
-func NewPromptAdapter(store *Store) *PromptAdapter {
+func NewPro mptAdapter(store *Store) *PromptAdapter {
 	if store == nil {
 		return nil
 	}

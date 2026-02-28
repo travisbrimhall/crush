@@ -1,7 +1,10 @@
 package dialog
 
 import (
+	"strings"
+
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/ui/common"
@@ -13,16 +16,12 @@ const QuitID = "quit"
 
 // Quit represents a confirmation dialog for quitting the application.
 type Quit struct {
-	com        *common.Common
-	selectedNo bool // true if "No" button is selected
-	keyMap     struct {
-		LeftRight,
-		EnterSpace,
-		Yes,
-		No,
-		Tab,
-		Close,
-		Quit key.Binding
+	com   *common.Common
+	input textinput.Model
+
+	keyMap struct {
+		Submit key.Binding
+		Close  key.Binding
 	}
 }
 
@@ -31,34 +30,21 @@ var _ Dialog = (*Quit)(nil)
 // NewQuit creates a new quit confirmation dialog.
 func NewQuit(com *common.Common) *Quit {
 	q := &Quit{
-		com:        com,
-		selectedNo: true,
+		com: com,
 	}
-	q.keyMap.LeftRight = key.NewBinding(
-		key.WithKeys("left", "right"),
-		key.WithHelp("←/→", "switch options"),
-	)
-	q.keyMap.EnterSpace = key.NewBinding(
-		key.WithKeys("enter", " "),
-		key.WithHelp("enter/space", "confirm"),
-	)
-	q.keyMap.Yes = key.NewBinding(
-		key.WithKeys("y", "Y", "ctrl+c"),
-		key.WithHelp("y/Y/ctrl+c", "yes"),
-	)
-	q.keyMap.No = key.NewBinding(
-		key.WithKeys("n", "N"),
-		key.WithHelp("n/N", "no"),
-	)
-	q.keyMap.Tab = key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("tab", "switch options"),
+
+	q.input = textinput.New()
+	q.input.SetVirtualCursor(false)
+	q.input.Placeholder = "type 'quit' to exit"
+	q.input.SetStyles(com.Styles.TextInput)
+	q.input.Focus()
+
+	q.keyMap.Submit = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "confirm"),
 	)
 	q.keyMap.Close = CloseKey
-	q.keyMap.Quit = key.NewBinding(
-		key.WithKeys("ctrl+c"),
-		key.WithHelp("ctrl+c", "quit"),
-	)
+
 	return q
 }
 
@@ -72,62 +58,90 @@ func (q *Quit) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
-		case key.Matches(msg, q.keyMap.Quit):
-			return ActionQuit{}
 		case key.Matches(msg, q.keyMap.Close):
 			return ActionClose{}
-		case key.Matches(msg, q.keyMap.LeftRight, q.keyMap.Tab):
-			q.selectedNo = !q.selectedNo
-		case key.Matches(msg, q.keyMap.EnterSpace):
-			if !q.selectedNo {
+		case key.Matches(msg, q.keyMap.Submit):
+			if strings.EqualFold(strings.TrimSpace(q.input.Value()), "quit") {
 				return ActionQuit{}
 			}
-			return ActionClose{}
-		case key.Matches(msg, q.keyMap.Yes):
-			return ActionQuit{}
-		case key.Matches(msg, q.keyMap.No, q.keyMap.Close):
-			return ActionClose{}
+			// Wrong input - could shake or show error, but for now just clear.
+			q.input.SetValue("")
+			return nil
+		default:
+			var cmd tea.Cmd
+			q.input, cmd = q.input.Update(msg)
+			return ActionCmd{cmd}
 		}
 	}
 
 	return nil
 }
 
+// Cursor returns the cursor position relative to the dialog.
+func (q *Quit) Cursor() *tea.Cursor {
+	cur := q.input.Cursor()
+	if cur == nil {
+		return nil
+	}
+
+	t := q.com.Styles
+	borderStyle := t.BorderFocus
+	inputStyle := t.Dialog.InputPrompt
+
+	// X offset: border + padding + input margin.
+	cur.X += borderStyle.GetBorderLeftSize() +
+		borderStyle.GetPaddingLeft() +
+		inputStyle.GetMarginLeft()
+
+	// Y offset: border + padding + question line + blank line + input margin.
+	const questionLines = 2 // "Type 'quit' to exit" + blank line
+	cur.Y += borderStyle.GetBorderTopSize() +
+		borderStyle.GetPaddingTop() +
+		questionLines +
+		inputStyle.GetMarginTop()
+
+	return cur
+}
+
 // Draw implements [Dialog].
 func (q *Quit) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
-	const question = "Are you sure you want to quit?"
-	baseStyle := q.com.Styles.Base
-	buttonOpts := []common.ButtonOpts{
-		{Text: "Yep!", Selected: !q.selectedNo, Padding: 3},
-		{Text: "Nope", Selected: q.selectedNo, Padding: 3},
-	}
-	buttons := common.ButtonGroup(q.com.Styles, buttonOpts, " ")
-	content := baseStyle.Render(
+	t := q.com.Styles
+	const question = "Type 'quit' to exit"
+
+	width := min(50, area.Dx())
+	innerWidth := width - t.Dialog.View.GetHorizontalFrameSize()
+
+	q.input.SetWidth(innerWidth - t.Dialog.InputPrompt.GetHorizontalFrameSize() - 1)
+
+	inputView := t.Dialog.InputPrompt.Render(q.input.View())
+
+	content := t.Base.Render(
 		lipgloss.JoinVertical(
 			lipgloss.Center,
 			question,
 			"",
-			buttons,
+			inputView,
 		),
 	)
 
-	view := q.com.Styles.BorderFocus.Render(content)
-	DrawCenter(scr, area, view)
-	return nil
+	view := t.BorderFocus.Render(content)
+
+	cur := q.Cursor()
+	DrawCenterCursor(scr, area, view, cur)
+	return cur
 }
 
 // ShortHelp implements [help.KeyMap].
 func (q *Quit) ShortHelp() []key.Binding {
 	return []key.Binding{
-		q.keyMap.LeftRight,
-		q.keyMap.EnterSpace,
+		q.keyMap.Submit,
+		q.keyMap.Close,
 	}
 }
 
 // FullHelp implements [help.KeyMap].
 func (q *Quit) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{q.keyMap.LeftRight, q.keyMap.EnterSpace, q.keyMap.Yes, q.keyMap.No},
-		{q.keyMap.Tab, q.keyMap.Close},
+		{q.keyMap.Submit, q.keyMap.Close},
 	}
 }

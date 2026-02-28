@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -17,10 +18,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"github.com/atotto/clipboard"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
 	"github.com/charmbracelet/crush/internal/config"
+	ctxserver "github.com/charmbracelet/crush/internal/context"
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/filetracker"
@@ -67,6 +70,9 @@ type App struct {
 	AgentCoordinator agent.Coordinator
 
 	LSPManager *lsp.Manager
+
+	// ContextServer handles external context ingestion from VS Code, Chrome, etc.
+	ContextServer *ctxserver.Server
 
 	config *config.Config
 
@@ -130,8 +136,6 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	// Initialize template store after app is created (needs templatePaths method).
 	app.Templates = templates.NewStore(app.templatePaths(), memoryStore)
 
-	app.setupEvents()
-
 	// Check for updates in the background.
 	go app.checkForUpdates(ctx)
 
@@ -147,6 +151,53 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 			app.cleanupFuncs = append(app.cleanupFuncs, metricsServer.Stop)
 		}
 	}
+
+	// Start context server for external integrations (VS Code, Chrome, Docker).
+	// Port 0 explicitly disables the server.
+	contextPort := 9119 // default
+	if cfg.Options != nil && cfg.Options.ContextServerPort > 0 {
+		contextPort = cfg.Options.ContextServerPort
+	}
+	if cfg.Options == nil || cfg.Options.ContextServerPort != -1 {
+		app.ContextServer = ctxserver.NewServer(fmt.Sprintf("127.0.0.1:%d", contextPort))
+		go func() {
+			if err := http.ListenAndServe(app.ContextServer.Addr(), app.ContextServer.Handler()); err != nil && err != http.ErrServerClosed {
+				slog.Warn("Context server failed", "error", err)
+			}
+		}()
+		slog.Info("Context server started", "port", contextPort, "token", app.ContextServer.Token())
+
+		// Register this session in the global registry for extension discovery.
+		entry := ctxserver.RegistryEntry{
+			Port:       contextPort,
+			Token:      app.ContextServer.Token(),
+			PID:        os.Getpid(),
+			WorkingDir: cfg.WorkingDir(),
+			StartedAt:  time.Now(),
+		}
+		if err := ctxserver.Register(entry); err != nil {
+			slog.Warn("Failed to register context server", "error", err)
+		}
+
+		// Write local server.json for easy extension access.
+		if err := ctxserver.WriteLocalServerFile(cfg.WorkingDir(), entry); err != nil {
+			slog.Warn("Failed to write local server file", "error", err)
+		}
+
+		// Copy token to clipboard for easy setup.
+		if err := clipboard.WriteAll(app.ContextServer.Token()); err == nil {
+			slog.Info("Context server token copied to clipboard")
+		}
+
+		// Unregister and clean up on shutdown.
+		app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
+			ctxserver.RemoveLocalServerFile(cfg.WorkingDir())
+			return ctxserver.Unregister(os.Getpid())
+		})
+	}
+
+	// Set up event subscriptions after all services are initialized.
+	app.setupEvents()
 
 	// cleanup database upon app shutdown
 	app.cleanupFuncs = append(
@@ -466,6 +517,9 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events)
 	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
+	if app.ContextServer != nil {
+		setupSubscriber(ctx, app.serviceEventsWG, "context", app.ContextServer.Subscribe, app.events)
+	}
 	cleanupFunc := func(context.Context) error {
 		cancel()
 		app.serviceEventsWG.Wait()

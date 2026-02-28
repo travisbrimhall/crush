@@ -39,6 +39,7 @@ type WriteResponseMetadata struct {
 	Diff      string `json:"diff"`
 	Additions int    `json:"additions"`
 	Removals  int    `json:"removals"`
+	IsNewFile bool   `json:"is_new_file"`
 }
 
 const WriteToolName = "write"
@@ -170,6 +171,7 @@ func NewWriteTool(
 					Diff:      diff,
 					Additions: additions,
 					Removals:  removals,
+					IsNewFile: fileInfo == nil,
 				},
 			), nil
 		})

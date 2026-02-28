@@ -29,6 +29,7 @@ import (
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/commands"
 	"github.com/charmbracelet/crush/internal/config"
+	ctxserver "github.com/charmbracelet/crush/internal/context"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/home"
@@ -227,6 +228,9 @@ type UI struct {
 
 	// Pending template for new session
 	pendingTemplateID string
+
+	// Pending external contexts from VS Code, Chrome, etc.
+	pendingContexts []*ctxserver.Entry
 
 	// mouse highlighting related state
 	lastClickTime time.Time
@@ -557,6 +561,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
+	case pubsub.Event[*ctxserver.Entry]:
+		m.handleExternalContext(msg.Payload)
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
 	case tea.TerminalVersionMsg:
@@ -1949,8 +1955,13 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 		if m.textarea.Focused() {
 			cur := m.textarea.Cursor()
-			cur.X++                            // Adjust for app margins
-			cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
+			cur.X++ // Adjust for app margins
+			// Offset for content above textarea (pending contexts, attachments).
+			offset := m.layout.editor.Min.Y + m.pendingContextsHeight()
+			if len(m.attachments.List()) > 0 {
+				offset++ // Attachments row
+			}
+			cur.Y += offset
 			return cur
 		}
 	}
@@ -2228,7 +2239,8 @@ func (m *UI) updateSize() {
 	// TODO: Abstract the textarea and attachments into a single editor
 	// component so we don't have to manually account for the attachments
 	// height here.
-	m.textarea.SetHeight(m.layout.editor.Dy() - 2) // Account for top margin/attachments and bottom margin
+	editorOverhead := 2 + m.pendingContextsHeight() // margins + pending contexts
+	m.textarea.SetHeight(m.layout.editor.Dy() - editorOverhead)
 	m.renderPills()
 
 	// Handle different app states
@@ -2683,15 +2695,102 @@ func (m *UI) randomizePlaceholders() {
 
 // renderEditorView renders the editor view with attachments if any.
 func (m *UI) renderEditorView(width int) string {
-	var attachmentsView string
-	if len(m.attachments.List()) > 0 {
-		attachmentsView = m.attachments.Render(width)
+	var parts []string
+
+	// Render pending external contexts.
+	if len(m.pendingContexts) > 0 {
+		parts = append(parts, m.renderPendingContexts(width))
 	}
-	return strings.Join([]string{
-		attachmentsView,
-		m.textarea.View(),
-		"", // margin at bottom of editor
-	}, "\n")
+
+	// Render attachments.
+	if len(m.attachments.List()) > 0 {
+		parts = append(parts, m.attachments.Render(width))
+	}
+
+	parts = append(parts, m.textarea.View(), "") // margin at bottom
+
+	return strings.Join(parts, "\n")
+}
+
+// renderPendingContexts renders the pending external contexts above the editor.
+func (m *UI) renderPendingContexts(width int) string {
+	s := m.com.Styles
+	var blocks []string
+
+	for _, ctx := range m.pendingContexts {
+		// Format age.
+		age := formatContextAge(ctx.ReceivedAt)
+
+		// Build header.
+		var title string
+		switch ctx.Source {
+		case ctxserver.SourceVSCode:
+			title = "VS Code"
+		case ctxserver.SourceChrome:
+			title = "Chrome"
+		case ctxserver.SourceDocker:
+			title = "Docker"
+		default:
+			title = string(ctx.Source)
+		}
+
+		if ctx.Count > 1 {
+			title = fmt.Sprintf("%s (×%d, %s)", title, ctx.Count, age)
+		} else {
+			title = fmt.Sprintf("%s (%s)", title, age)
+		}
+
+		// Build body.
+		var body string
+		if ctx.FilePath != "" {
+			body = s.Muted.Render("File: ") + s.Subtle.Render(ctx.FilePath)
+		}
+
+		headerLine := fmt.Sprintf("┌─ %s ", title) + strings.Repeat("─", max(0, width-lipgloss.Width(title)-5))
+		header := s.Muted.Render(headerLine)
+		footer := s.Muted.Render("└" + strings.Repeat("─", max(0, width-2)))
+
+		if body != "" {
+			blocks = append(blocks, header+"\n│ "+body+"\n"+footer)
+		} else {
+			blocks = append(blocks, header+"\n"+footer)
+		}
+	}
+
+	return strings.Join(blocks, "\n")
+}
+
+// pendingContextsHeight returns the number of lines consumed by pending contexts.
+func (m *UI) pendingContextsHeight() int {
+	if len(m.pendingContexts) == 0 {
+		return 0
+	}
+	height := 0
+	for _, ctx := range m.pendingContexts {
+		if ctx.FilePath != "" {
+			height += 3 // header + body + footer
+		} else {
+			height += 2 // header + footer
+		}
+	}
+	// Account for newlines between blocks and trailing newline.
+	height += len(m.pendingContexts)
+	return height
+}
+
+// formatContextAge returns a human-readable age string.
+func formatContextAge(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
@@ -3010,6 +3109,17 @@ func (m *UI) handlePermissionNotification(notification permission.PermissionNoti
 	}
 }
 
+// handleExternalContext handles incoming context from VS Code, Chrome, etc.
+func (m *UI) handleExternalContext(entry *ctxserver.Entry) {
+	// Add to pending contexts (newest first).
+	m.pendingContexts = append([]*ctxserver.Entry{entry}, m.pendingContexts...)
+
+	// Keep max 20 pending.
+	if len(m.pendingContexts) > 20 {
+		m.pendingContexts = m.pendingContexts[:20]
+	}
+}
+
 // newSession clears the current session state and prepares for a new session.
 // The actual session creation happens when the user sends their first message.
 // Returns a command to reload prompt history.
@@ -3276,6 +3386,12 @@ func (m *UI) drawSessionDetails(scr uv.Screen, area uv.Rectangle) {
 		"",
 		m.modelInfo(width),
 		"",
+	}
+
+	// Show context server token if available.
+	if m.com.App.ContextServer != nil {
+		tokenLine := s.Muted.Render("Context Token: ") + s.Subtle.Render(m.com.App.ContextServer.Token())
+		blocks = append(blocks, tokenLine, "")
 	}
 
 	detailsHeader := lipgloss.JoinVertical(

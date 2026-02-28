@@ -127,7 +127,17 @@ func (w *WriteToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	file := fsext.PrettyPath(params.FilePath)
-	header := toolHeader(sty, opts.Status, "Write", cappedWidth, opts.Compact, file)
+	toolParams := []string{file}
+
+	// Check if this is a new file creation.
+	var meta tools.WriteResponseMetadata
+	if opts.HasResult() {
+		if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err == nil && meta.IsNewFile {
+			toolParams = append(toolParams, "✨New File Created✨")
+		}
+	}
+
+	header := toolHeader(sty, opts.Status, "Write", cappedWidth, opts.Compact, toolParams...)
 	if opts.Compact {
 		return header
 	}

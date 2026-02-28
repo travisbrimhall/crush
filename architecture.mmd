@@ -1,8 +1,22 @@
 flowchart TB
+    subgraph External["External Context Sources"]
+        VSCode["VS Code Extension"]
+        Browser["Browser Extension"]
+        Terminal["Terminal/CLI"]
+    end
+
+    subgraph LocalAPI["Local API Server"]
+        APIServer["HTTP Server :9119"]
+        ContextEndpoint["POST /context"]
+        SubmitEndpoint["POST /submit"]
+        StatusEndpoint["GET /status"]
+    end
+
     subgraph UI["TUI Layer"]
         Model["ui/model"]
         Chat["Chat View"]
         Input["Input Handler"]
+        ContextBlock["Context Block (styled)"]
     end
 
     subgraph Coordinator["Agent Coordinator"]
@@ -34,6 +48,7 @@ flowchart TB
         Memory["memory.MemoryStore"]
         LSP["lsp.Manager"]
         Permissions["permission.Service"]
+        PubSub["pubsub.Broker"]
     end
 
     subgraph Tools["Agent Tools"]
@@ -45,6 +60,23 @@ flowchart TB
         SubAgent["Sub-Agent"]
     end
 
+    subgraph MCP["MCP Servers (outbound)"]
+        VSCodeMCP["VS Code MCP"]
+        DockerMCP["Docker MCP"]
+        OtherMCP["Other MCPs"]
+    end
+
+    %% External context flow (inbound)
+    VSCode -->|"POST diagnostic/selection"| ContextEndpoint
+    Browser -->|"POST console error/network"| ContextEndpoint
+    Terminal -->|"POST test failure"| ContextEndpoint
+
+    ContextEndpoint -->|"injects context"| PubSub
+    SubmitEndpoint -->|"context + auto-run"| Coord
+    PubSub -->|"tea.Msg"| Model
+    Model -->|"renders"| ContextBlock
+
+    %% Standard conversation flow
     Input -->|"user prompt"| Model
     Model -->|"Run()"| Coord
     Coord -->|"mergeCallOptions()"| ProviderOpts
@@ -58,6 +90,11 @@ flowchart TB
     Run -->|"streams"| Providers
     Run -->|"executes"| Tools
     Run -->|"at 80% context"| Summarize
+
+    %% Tool backends (outbound)
+    Tools -->|"highlight, open file"| VSCodeMCP
+    Tools -->|"logs, exec, compose"| DockerMCP
+    Tools -->|"other actions"| OtherMCP
 
     Coord -.->|"reads/writes"| Sessions
     Coord -.->|"reads/writes"| Messages

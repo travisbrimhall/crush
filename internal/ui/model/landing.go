@@ -28,6 +28,13 @@ func (m *UI) landingView() string {
 	}
 
 	parts = append(parts, "", m.modelInfo(width))
+
+	// Show context server token if server is running.
+	if m.com.App.ContextServer != nil {
+		tokenLine := t.Muted.Render("Context Server: ") + t.Subtle.Render(m.com.App.ContextServer.Token())
+		parts = append(parts, "", tokenLine)
+	}
+
 	infoSection := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	return lipgloss.NewStyle().

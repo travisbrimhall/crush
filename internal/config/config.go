@@ -285,6 +285,7 @@ type Options struct {
 	Attribution               *Attribution `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
 	DisableMetrics            bool         `json:"disable_metrics,omitempty" jsonschema:"description=Disable sending metrics,default=false"`
 	MetricsPort               int          `json:"metrics_port,omitempty" jsonschema:"description=Port for Prometheus metrics HTTP server. Set to 0 to disable,default=0,example=9090"`
+	ContextServerPort         int          `json:"context_server_port,omitempty" jsonschema:"description=Port for external context ingestion API (VS Code, Chrome, Docker). Set to 0 to disable,default=9119,example=9119"`
 	InitializeAs              string       `json:"initialize_as,omitempty" jsonschema:"description=Name of the context file to create/update during project initialization,default=AGENTS.md,example=AGENTS.md,example=CRUSH.md,example=CLAUDE.md,example=docs/LLMs.md"`
 	AutoLSP                   *bool        `json:"auto_lsp,omitempty" jsonschema:"description=Automatically setup LSPs based on root markers,default=true"`
 	Progress                  *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
