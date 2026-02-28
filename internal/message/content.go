@@ -82,6 +82,7 @@ type BinaryContent struct {
 	Path     string
 	MIMEType string
 	Data     []byte
+	Source   string
 }
 
 func (bc BinaryContent) String(p catwalk.InferenceProvider) string {
@@ -453,7 +454,12 @@ func PromptWithTextAttachments(prompt string, attachments []Attachment) string {
 		} else {
 			sb.WriteString("<file>\n")
 		}
-		sb.WriteString("\n")
+		// Include line range header for code selections.
+		if content.StartLine > 0 && content.EndLine > 0 {
+			fmt.Fprintf(&sb, "\n%s (lines %d-%d):\n", content.FilePath, content.StartLine, content.EndLine)
+		} else {
+			sb.WriteString("\n")
+		}
 		sb.Write(content.Content)
 		sb.WriteString("\n</file>\n")
 	}
