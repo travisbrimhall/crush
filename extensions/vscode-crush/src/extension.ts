@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { McpServer } from './mcp/server';
 
 const SCHEMA_VERSION = '1.0';
 
@@ -185,6 +186,56 @@ async function sendToCrush(payload: DiagnosticPayload): Promise<boolean> {
 }
 
 /**
+ * Sends a selection payload to Crush API.
+ */
+async function sendSelectionPayload(payload: object): Promise<boolean> {
+  const workspaceRoot = (payload as { workspace?: { root?: string } }).workspace?.root || '';
+
+  // Try to auto-detect from .crush/server.json first.
+  const serverFile = readServerFile(workspaceRoot);
+
+  let apiUrl: string;
+
+  if (serverFile) {
+    apiUrl = `http://localhost:${serverFile.port}`;
+  } else {
+    // Fall back to VS Code settings.
+    const config = vscode.workspace.getConfiguration('crush');
+    apiUrl = config.get<string>('apiUrl', 'http://localhost:9119');
+  }
+
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const response = await fetch(`${apiUrl}/context`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [CRUSH_SOURCE_HEADER]: CRUSH_SOURCE,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        vscode.window.showInformationMessage('Sent to Crush');
+        return true;
+      }
+
+      if (response.status === 409) {
+        vscode.window.showErrorMessage('Workspace mismatch. Is Crush running in a different project?');
+        return false;
+      }
+    } catch {
+      // Retry with backoff
+      await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, i)));
+    }
+  }
+
+  vscode.window.showErrorMessage('Crush is not running or unreachable');
+  return false;
+}
+
+/**
  * Builds the payload for a diagnostic.
  */
 function buildPayload(
@@ -239,6 +290,18 @@ function buildPayload(
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  console.log('Crush extension activated');
+
+  // Start MCP server
+  const mcpServer = new McpServer();
+  mcpServer.start().then(() => {
+    console.log('MCP server started successfully');
+  }).catch((err) => {
+    console.error('Failed to start MCP server:', err);
+    vscode.window.showErrorMessage(`Crush MCP server failed: ${err.message}`);
+  });
+  context.subscriptions.push({ dispose: () => mcpServer.dispose() });
+  
   // Command: Fix diagnostic with Crush
   const fixDiagnosticCmd = vscode.commands.registerCommand(
     'crush.fixDiagnostic',
@@ -283,7 +346,59 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  // Command: Fix selection (for right-click menu)
+  // Command: Send selection to Crush (always sends as selection context)
+  const sendSelectionCmd = vscode.commands.registerCommand('crush.sendSelection', async () => {
+    console.log('crush.sendSelection called');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showErrorMessage('No active editor');
+      return;
+    }
+    console.log('Got editor');
+
+    const selection = editor.selection;
+    const document = editor.document;
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+    const workspaceRoot = workspaceFolder?.uri.fsPath || '';
+
+    if (!workspaceRoot) {
+      vscode.window.showErrorMessage('No workspace folder found');
+      return;
+    }
+
+    // Use cursor position if no selection
+    const range = selection.isEmpty
+      ? new vscode.Range(selection.start.line, 0, selection.start.line + 1, 0)
+      : selection;
+
+    const payload = {
+      schemaVersion: SCHEMA_VERSION,
+      event: 'selection_context',
+      source: 'vscode',
+      timestamp: new Date().toISOString(),
+      workspace: {
+        id: getWorkspaceId(workspaceRoot),
+        root: workspaceRoot,
+        name: workspaceFolder?.name || '',
+      },
+      file: {
+        path: vscode.workspace.asRelativePath(document.uri),
+        languageId: document.languageId,
+        version: document.version,
+      },
+      selection: {
+        range: {
+          start: { line: range.start.line, character: range.start.character },
+          end: { line: range.end.line, character: range.end.character },
+        },
+        text: document.getText(range),
+      },
+    };
+
+    await sendSelectionPayload(payload);
+  });
+
+  // Command: Fix selection (sends diagnostic if present, otherwise selection)
   const fixSelectionCmd = vscode.commands.registerCommand('crush.fixSelection', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) return;
@@ -303,50 +418,8 @@ export function activate(context: vscode.ExtensionContext) {
       const payload = buildPayload(relevantDiagnostics[0], document, workspaceFolder);
       await sendToCrush(payload);
     } else {
-      // Send selection as general context
-      const config = vscode.workspace.getConfiguration('crush');
-      const apiUrl = config.get<string>('apiUrl', 'http://localhost:9119');
-
-      const workspaceRoot = workspaceFolder?.uri.fsPath || '';
-      const payload = {
-        schemaVersion: SCHEMA_VERSION,
-        event: 'selection_context',
-        source: 'vscode',
-        timestamp: new Date().toISOString(),
-        workspace: {
-          id: getWorkspaceId(workspaceRoot),
-          root: workspaceRoot,
-          name: workspaceFolder?.name || '',
-        },
-        file: {
-          path: vscode.workspace.asRelativePath(document.uri),
-          languageId: document.languageId,
-          version: document.version,
-        },
-        selection: {
-          range: {
-            start: { line: selection.start.line, character: selection.start.character },
-            end: { line: selection.end.line, character: selection.end.character },
-          },
-          text: document.getText(selection),
-        },
-      };
-
-      try {
-        const response = await fetch(`${apiUrl}/context`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            [CRUSH_SOURCE_HEADER]: CRUSH_SOURCE,
-          },
-          body: JSON.stringify(payload),
-        });
-        if (response.ok) {
-          vscode.window.showInformationMessage('Selection sent to Crush');
-        }
-      } catch {
-        vscode.window.showErrorMessage('Failed to send to Crush');
-      }
+      // Fall back to sending selection
+      vscode.commands.executeCommand('crush.sendSelection');
     }
   });
 
@@ -401,7 +474,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  context.subscriptions.push(fixDiagnosticCmd, fixSelectionCmd, fixFromHoverCmd, showStatusCmd, codeActionProvider, hoverProvider);
+  context.subscriptions.push(fixDiagnosticCmd, sendSelectionCmd, fixSelectionCmd, fixFromHoverCmd, showStatusCmd, codeActionProvider, hoverProvider);
 }
 
 export function deactivate() {}

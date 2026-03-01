@@ -26,8 +26,13 @@
         "icon": "$(sparkle)"
       },
       {
-        "command": "crush.fixSelection",
+        "command": "crush.sendSelection",
         "title": "Send to Crush",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "crush.fixSelection",
+        "title": "Fix with Crush (auto-detect)",
         "icon": "$(sparkle)"
       },
       {
@@ -42,9 +47,8 @@
     "menus": {
       "editor/context": [
         {
-          "command": "crush.fixSelection",
-          "group": "1_modification@0",
-          "when": "editorHasSelection"
+          "command": "crush.sendSelection",
+          "group": "1_modification@0"
         }
       ],
       "problems/context": [
@@ -66,6 +70,11 @@
           "type": "string",
           "default": "",
           "description": "Session token for Crush API (printed at Crush startup)"
+        },
+        "crush.mcpServer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable MCP server for Crush to control VS Code"
         }
       }
     }
@@ -83,5 +92,8 @@
     "@typescript-eslint/parser": "^6.13.0",
     "eslint": "^8.54.0",
     "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
   }
 }
