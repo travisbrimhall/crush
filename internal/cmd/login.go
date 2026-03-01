@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-
 	"strings"
 
 	"charm.land/lipgloss/v2"

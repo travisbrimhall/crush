@@ -19,8 +19,10 @@ type ContextItem struct {
 	focused bool
 }
 
-var _ list.Item = &ContextItem{}
-var _ list.Focusable = &ContextItem{}
+var (
+	_ list.Item      = &ContextItem{}
+	_ list.Focusable = &ContextItem{}
+)
 
 // SetFocused implements list.Focusable.
 func (c *ContextItem) SetFocused(focused bool) {

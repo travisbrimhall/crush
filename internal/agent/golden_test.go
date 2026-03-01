@@ -500,7 +500,6 @@ func (a *scriptedSessionAgent) Run(ctx context.Context, call SessionAgentCall) (
 	}
 
 	result, err := a.scripted.Stream(genCtx, streamCall)
-
 	// Handle errors - mirror real sessionAgent behavior.
 	if err != nil {
 		if currentAssistant != nil {

@@ -253,8 +253,9 @@ $HOME/.local/share/crush/crush.json
 
 > [!TIP]
 > You can override the user and data config locations by setting:
-> * `CRUSH_GLOBAL_CONFIG`
-> * `CRUSH_GLOBAL_DATA`
+>
+> - `CRUSH_GLOBAL_CONFIG`
+> - `CRUSH_GLOBAL_DATA`
 
 ### LSPs
 
@@ -371,10 +372,7 @@ completely hidden from the agent.
 {
   "$schema": "https://charm.land/crush.json",
   "options": {
-    "disabled_tools": [
-      "bash",
-      "sourcegraph"
-    ]
+    "disabled_tools": ["bash", "sourcegraph"]
   }
 }
 ```
@@ -400,9 +398,9 @@ Skills are discovered from:
   "options": {
     "skills_paths": [
       "~/.config/crush/skills", // Windows: "%LOCALAPPDATA%\\crush\\skills",
-      "./project-skills"
-    ]
-  }
+      "./project-skills",
+    ],
+  },
 }
 ```
 
@@ -465,10 +463,10 @@ it creates. You can customize this behavior with the `attribution` option:
 
 - `trailer_style`: Controls the attribution trailer added to commit messages
   (default: `assisted-by`)
-	- `assisted-by`: Adds `Assisted-by: [Model Name] via Crush <crush@charm.land>`
-	  (includes the model name)
-	- `co-authored-by`: Adds `Co-Authored-By: Crush <crush@charm.land>`
-	- `none`: No attribution trailer
+  - `assisted-by`: Adds `Assisted-by: [Model Name] via Crush <crush@charm.land>`
+    (includes the model name)
+  - `co-authored-by`: Adds `Co-Authored-By: Crush <crush@charm.land>`
+  - `none`: No attribution trailer
 - `generated_with`: When true (default), adds `💘 Generated with Crush` line to
   commit messages and PR descriptions
 
@@ -480,8 +478,9 @@ Anthropic-compatible APIs.
 > [!NOTE]
 > Note that we support two "types" for OpenAI. Make sure to choose the right one
 > to ensure the best experience!
-> * `openai` should be used when proxying or routing requests through OpenAI.
-> * `openai-compat` should be used when using non-OpenAI providers that have OpenAI-compatible APIs.
+>
+> - `openai` should be used when proxying or routing requests through OpenAI.
+> - `openai-compat` should be used when using non-OpenAI providers that have OpenAI-compatible APIs.
 
 #### OpenAI-Compatible APIs
 
