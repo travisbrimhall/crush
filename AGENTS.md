@@ -76,3 +76,45 @@ func TestYourFunction(t *testing.T) {
 
 ## Working on the TUI (UI)
 Anytime you need to work on the tui before starting work read the internal/ui/AGENTS.md file
+
+## VS Code Integration
+
+When connected to VS Code, prefer visual tools for communicating with the user:
+
+### annotate - Best for Explanations
+Add inline notes directly in the editor. Much more effective than describing line numbers in text.
+
+```
+annotations=[
+  {find: "functionName", text: "This handles auth", style: "info"},
+  {line: 42, text: "Bug is here", style: "error"},
+  {find: "TODO", text: "Needs implementation", style: "warning"}
+]
+```
+
+- **find**: Search for text and annotate that line (easiest method)
+- **line**: Target specific line number (1-based)
+- **style**: info (blue), warning (orange), error (red)
+- Annotations persist until replaced - use them liberally
+- Always get document version first with get_document_metadata
+
+### highlight_range - Draw Attention
+Highlight code blocks you're discussing. Use colors meaningfully.
+
+```
+find="code to highlight"  # easiest
+startLine=10, endLine=15  # line-based (1-based)
+style="green"|"red"       # default is yellow
+```
+
+- **green**: Good code, additions, correct approach
+- **red**: Problems, bugs, code to remove
+- **yellow**: General focus/attention
+
+### When to Use What
+- "The bug is on line 57" → highlight_range with style="red"
+- "Here's how this works" → annotate multiple functions with notes
+- "Compare these implementations" → split_view
+- "Look at what changed" → show_diff
+
+**Show, don't tell.** The user is looking at VS Code—put information where their eyes are.

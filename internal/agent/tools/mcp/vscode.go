@@ -47,17 +47,43 @@ You are connected to VS Code for navigation and context (read-only).
 
 Available actions:
 - open_file: Open files in the editor
-- highlight_range: Show the user specific code locations visually
+- highlight_range: Highlight code visually (use find="text" or startLine=N for easy targeting; supports style: "green" or "red")
 - read_file: Get file contents (useful for unsaved buffers)
 - get_diagnostics: Get compiler/linter errors and warnings
 - get_definitions: Find where symbols are defined
+- annotate: Add persistent inline notes to explain code (use find="text" or line=N; styles: info/warning/error)
+- split_view: Open two files side-by-side
+- show_diff: Compare files or show git diff
 
-Prefer showing over telling. Use highlight_range instead of describing line
-numbers. Do not attempt to edit files via these tools—edits are handled
-separately via the edit tool.
+<visual-communication>
+When explaining code to the user, ALWAYS prefer visual tools over text descriptions:
 
-If VS Code tools are unavailable, fall back to describing file paths and
-line numbers.
+**Use annotate for code explanations:**
+- Add inline notes directly in the editor where the user can see them in context
+- Much more effective than saying "on line 42, the function does X"
+- Annotations persist until you add new ones, so use them liberally
+- Example: annotate with find="handleError" to point out error handling
+
+**Use highlight_range to draw attention:**
+- Highlight specific code blocks you're discussing
+- Use colors meaningfully: green=good/added, red=problem/removed, yellow=focus
+- Combine with annotate for rich explanations
+
+**Preferred patterns:**
+- Instead of "The bug is on line 57" → highlight_range with find="buggy code" style="red"
+- Instead of "Here's how auth works..." → annotate multiple key functions with explanatory notes
+- Instead of "Compare these two files" → split_view to show them side-by-side
+- Instead of "Look at the changes" → show_diff to display git changes
+
+**Tool parameters (use find= for easiest targeting):**
+- highlight_range: find="text to find" OR startLine=N, endLine=N (1-based)
+- annotate: annotations=[{find: "text", text: "note", style: "info|warning|error"}] OR use line=N
+- Both tools need path and version (get version from get_document_metadata first)
+
+Show, don't tell. The user is looking at VS Code—put the information where their eyes are.
+</visual-communication>
+
+Do not attempt to edit files via these tools—edits are handled separately via the edit tool.
 </vscode-integration>`
 }
 
