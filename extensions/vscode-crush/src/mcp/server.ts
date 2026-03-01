@@ -5,6 +5,10 @@ import * as path from 'path';
 
 const TOOL_TIMEOUT_MS = 5000;
 const HIGHLIGHT_DURATION_MS = 3000;
+const ANNOTATION_DURATION_MS = 10000;
+
+// Track active annotations for cleanup
+let activeAnnotations: vscode.TextEditorDecorationType[] = [];
 
 // Discovery file schema
 interface DiscoveryFile {
@@ -90,11 +94,9 @@ async function getDocumentMetadata(params: { path: string }) {
   validateWorkspacePath(params.path);
   const uri = resolveWorkspaceUri(params.path);
   const doc = await vscode.workspace.openTextDocument(uri);
-  return {
-    version: doc.version,
-    size: doc.getText().length,
-    languageId: doc.languageId,
-  };
+  const size = doc.getText().length;
+  const sizeStr = size > 1024 ? `${(size / 1024).toFixed(1)}KB` : `${size}B`;
+  return `${params.path}: ${sizeStr}, ${doc.languageId}, v${doc.version}`;
 }
 
 async function openFile(params: { path: string; preview?: boolean }) {
@@ -102,19 +104,24 @@ async function openFile(params: { path: string; preview?: boolean }) {
   const uri = resolveWorkspaceUri(params.path);
   const doc = await vscode.workspace.openTextDocument(uri);
   await vscode.window.showTextDocument(doc, { preview: params.preview ?? false });
-  return { success: true, languageId: doc.languageId };
+  return `Opened ${params.path}`;
 }
 
 // Each highlight gets its own decoration type to allow stacking
-function createHighlightDecoration() {
+function createHighlightDecoration(style?: 'green' | 'red' | 'default') {
+  const colors: Record<string, { bg: string; border: string }> = {
+    green: { bg: 'rgba(40, 167, 69, 0.15)', border: 'rgba(40, 167, 69, 0.4)' },
+    red: { bg: 'rgba(220, 53, 69, 0.15)', border: 'rgba(220, 53, 69, 0.4)' },
+    default: { bg: 'rgba(255, 213, 79, 0.15)', border: 'rgba(255, 213, 79, 0.4)' },
+  };
+  const c = colors[style || 'default'];
   return vscode.window.createTextEditorDecorationType({
-    backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
-    border: '1px solid',
-    borderColor: new vscode.ThemeColor('editor.findMatchHighlightBorder'),
+    backgroundColor: c.bg,
+    border: `2px solid ${c.border}`,
   });
 }
 
-async function highlightRangeImpl(params: { path: string; version: number; start: number; end: number }) {
+async function highlightRangeImpl(params: { path: string; version: number; start: number; end: number; style?: 'green' | 'red' }) {
   validateWorkspacePath(params.path);
   const uri = resolveWorkspaceUri(params.path);
   const doc = await vscode.workspace.openTextDocument(uri);
@@ -133,14 +140,17 @@ async function highlightRangeImpl(params: { path: string; version: number; start
   const endPos = doc.positionAt(params.end);
   const range = new vscode.Range(startPos, endPos);
 
-  const decoration = createHighlightDecoration();
+  const decoration = createHighlightDecoration(params.style);
   editor.setDecorations(decoration, [{ range }]);
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 
-  return { success: true };
+  const startLine = startPos.line + 1;
+  const endLine = endPos.line + 1;
+  const lineRange = startLine === endLine ? `line ${startLine}` : `lines ${startLine}-${endLine}`;
+  return `Highlighted ${lineRange} in ${params.path}`;
 }
 
-async function highlightRange(params: { path: string; version: number; start: number; end: number }) {
+async function highlightRange(params: { path: string; version: number; start: number; end: number; style?: 'green' | 'red' }) {
   return withTimeout(highlightRangeImpl(params), 'highlight_range');
 }
 
@@ -174,7 +184,9 @@ async function readFile(params: { path: string; version?: number; range?: { star
     truncated = true;
   }
 
-  return { content, truncated, fileSize: fullText.length, version: doc.version };
+  const lines = content.split('\n').length;
+  const suffix = truncated ? ' (truncated)' : '';
+  return `${params.path}: ${lines} lines, ${fullText.length} bytes, v${doc.version}${suffix}\n\n${content}`;
 }
 
 async function getDiagnostics(params: { path: string }) {
@@ -233,6 +245,145 @@ async function getDefinitions(params: { path: string; version: number; position:
   return withTimeout(getDefinitionsImpl(params), 'get_definitions');
 }
 
+// Annotate: add temporary inline notes
+interface Annotation {
+  offset: number;
+  text: string;
+  style?: 'info' | 'warning' | 'error';
+}
+
+async function annotateImpl(params: { path: string; version: number; annotations: Annotation[]; duration?: number }) {
+  validateWorkspacePath(params.path);
+  const uri = resolveWorkspaceUri(params.path);
+  const doc = await vscode.workspace.openTextDocument(uri);
+
+  validateVersion(doc, params.version);
+
+  // Clear previous annotations
+  activeAnnotations.forEach((d) => d.dispose());
+  activeAnnotations = [];
+
+  let editor = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
+  if (!editor) {
+    editor = await vscode.window.showTextDocument(doc, { preview: true });
+  }
+
+  const styleColors: Record<string, { bg: string; fg: string }> = {
+    info: { bg: 'rgba(59, 130, 246, 0.8)', fg: '#ffffff' },
+    warning: { bg: 'rgba(245, 158, 11, 0.8)', fg: '#000000' },
+    error: { bg: 'rgba(239, 68, 68, 0.8)', fg: '#ffffff' },
+  };
+
+  for (const ann of params.annotations) {
+    if (ann.offset < 0 || ann.offset > doc.getText().length) {
+      continue;
+    }
+
+    const pos = doc.positionAt(ann.offset);
+    const range = new vscode.Range(pos, pos);
+    const colors = styleColors[ann.style || 'info'];
+
+    const decoration = vscode.window.createTextEditorDecorationType({
+      after: {
+        contentText: ` ← ${ann.text}`,
+        backgroundColor: colors.bg,
+        color: colors.fg,
+        margin: '0 0 0 1em',
+        fontStyle: 'italic',
+      },
+    });
+
+    editor.setDecorations(decoration, [{ range }]);
+    activeAnnotations.push(decoration);
+  }
+
+  // Reveal first annotation
+  if (params.annotations.length > 0) {
+    const firstPos = doc.positionAt(params.annotations[0].offset);
+    editor.revealRange(new vscode.Range(firstPos, firstPos), vscode.TextEditorRevealType.InCenter);
+  }
+
+  // Auto-clear after duration
+  const duration = params.duration ?? ANNOTATION_DURATION_MS / 1000;
+  setTimeout(() => {
+    activeAnnotations.forEach((d) => d.dispose());
+    activeAnnotations = [];
+  }, duration * 1000);
+
+  return `Added ${params.annotations.length} annotation(s) to ${params.path}`;
+}
+
+async function annotate(params: { path: string; version: number; annotations: Annotation[]; duration?: number }) {
+  return withTimeout(annotateImpl(params), 'annotate');
+}
+
+// Split view: open two files side by side
+async function splitViewImpl(params: { left: string; right: string; focus?: 'left' | 'right' }) {
+  validateWorkspacePath(params.left);
+  validateWorkspacePath(params.right);
+
+  const leftUri = resolveWorkspaceUri(params.left);
+  const rightUri = resolveWorkspaceUri(params.right);
+
+  const leftDoc = await vscode.workspace.openTextDocument(leftUri);
+  const rightDoc = await vscode.workspace.openTextDocument(rightUri);
+
+  await vscode.window.showTextDocument(leftDoc, { viewColumn: vscode.ViewColumn.One, preview: false });
+  await vscode.window.showTextDocument(rightDoc, { viewColumn: vscode.ViewColumn.Two, preview: false });
+
+  // Focus the requested side
+  if (params.focus === 'left') {
+    await vscode.window.showTextDocument(leftDoc, { viewColumn: vscode.ViewColumn.One });
+  }
+
+  return `Split view: ${params.left} | ${params.right}`;
+}
+
+async function splitView(params: { left: string; right: string; focus?: 'left' | 'right' }) {
+  return withTimeout(splitViewImpl(params), 'split_view');
+}
+
+// Show diff: compare two files or show git diff
+async function showDiffImpl(params: { left?: string; right?: string; path?: string; ref?: string; title?: string }) {
+  // Option A: Compare two files
+  if (params.left && params.right) {
+    validateWorkspacePath(params.left);
+    validateWorkspacePath(params.right);
+
+    const leftUri = resolveWorkspaceUri(params.left);
+    const rightUri = resolveWorkspaceUri(params.right);
+    const title = params.title || `${params.left} ↔ ${params.right}`;
+
+    await vscode.commands.executeCommand('vscode.diff', leftUri, rightUri, title);
+    return `Showing diff: ${title}`;
+  }
+
+  // Option B: Git diff for a single file
+  if (params.path) {
+    validateWorkspacePath(params.path);
+    const uri = resolveWorkspaceUri(params.path);
+    const ref = params.ref || 'HEAD';
+
+    // Use git.openDiffFromUri or fall back to scm
+    const gitUri = vscode.Uri.parse(`git:${params.path}?ref=${ref}`);
+
+    try {
+      await vscode.commands.executeCommand('vscode.diff', gitUri, uri, `${params.path} (${ref} ↔ Working)`);
+      return `Showing diff for ${params.path} vs ${ref}`;
+    } catch {
+      // Fall back to opening the file if git diff isn't available
+      await vscode.commands.executeCommand('git.openChange', uri);
+      return `Showing git changes for ${params.path}`;
+    }
+  }
+
+  throw new McpError(400, 'Must provide either (left, right) or (path) parameters');
+}
+
+async function showDiff(params: { left?: string; right?: string; path?: string; ref?: string; title?: string }) {
+  return withTimeout(showDiffImpl(params), 'show_diff');
+}
+
 // Tool definitions for MCP
 const TOOLS = [
   {
@@ -270,6 +421,7 @@ const TOOLS = [
         version: { type: 'integer', minimum: 0, description: 'Document version from get_document_metadata' },
         start: { type: 'integer', minimum: 0, description: 'Start offset (UTF-16 code units)' },
         end: { type: 'integer', minimum: 0, description: 'End offset (UTF-16 code units)' },
+        style: { type: 'string', enum: ['green', 'red'], description: 'Highlight color (default: yellow)' },
       },
     },
   },
@@ -317,6 +469,58 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'annotate',
+    description: 'Adds temporary inline annotations to code. Use this to point out multiple things at once with explanatory notes.',
+    inputSchema: {
+      type: 'object',
+      required: ['path', 'version', 'annotations'],
+      properties: {
+        path: { type: 'string', description: 'Workspace-relative file path' },
+        version: { type: 'integer', minimum: 0, description: 'Document version' },
+        annotations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['offset', 'text'],
+            properties: {
+              offset: { type: 'integer', minimum: 0, description: 'Position offset in file' },
+              text: { type: 'string', description: 'Annotation text to display' },
+              style: { type: 'string', enum: ['info', 'warning', 'error'], description: 'Annotation style (default: info)' },
+            },
+          },
+        },
+        duration: { type: 'number', description: 'Auto-clear after N seconds (default: 10)' },
+      },
+    },
+  },
+  {
+    name: 'split_view',
+    description: 'Opens two files side-by-side for comparison.',
+    inputSchema: {
+      type: 'object',
+      required: ['left', 'right'],
+      properties: {
+        left: { type: 'string', description: 'Left file path' },
+        right: { type: 'string', description: 'Right file path' },
+        focus: { type: 'string', enum: ['left', 'right'], description: 'Which side to focus (default: right)' },
+      },
+    },
+  },
+  {
+    name: 'show_diff',
+    description: 'Shows a diff view. Either compare two files (left/right) or show git diff for a single file (path).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        left: { type: 'string', description: 'Left file path (for file comparison)' },
+        right: { type: 'string', description: 'Right file path (for file comparison)' },
+        path: { type: 'string', description: 'File path (for git diff)' },
+        ref: { type: 'string', description: 'Git ref to compare against (default: HEAD)' },
+        title: { type: 'string', description: 'Custom title for diff tab' },
+      },
+    },
+  },
 ];
 
 // Tool dispatcher
@@ -327,13 +531,19 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     case 'open_file':
       return openFile(args as { path: string; preview?: boolean });
     case 'highlight_range':
-      return highlightRange(args as { path: string; version: number; start: number; end: number });
+      return highlightRange(args as { path: string; version: number; start: number; end: number; style?: 'green' | 'red' });
     case 'read_file':
       return readFile(args as { path: string; version?: number; range?: { start: number; end: number }; maxBytes?: number });
     case 'get_diagnostics':
       return getDiagnostics(args as { path: string });
     case 'get_definitions':
       return getDefinitions(args as { path: string; version: number; position: number });
+    case 'annotate':
+      return annotate(args as { path: string; version: number; annotations: Annotation[]; duration?: number });
+    case 'split_view':
+      return splitView(args as { left: string; right: string; focus?: 'left' | 'right' });
+    case 'show_diff':
+      return showDiff(args as { left?: string; right?: string; path?: string; ref?: string; title?: string });
     default:
       throw new McpError(400, `Unknown tool: ${name}`);
   }
@@ -391,6 +601,22 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
       }
 
       case 'tools/list': {
+        // DEBUG: Write tools info to file
+        const fs = require('fs');
+        const debugPath = workspaceRoot + '/.crush/mcp-debug.json';
+        const debugInfo = {
+          timestamp: new Date().toISOString(),
+          toolCount: TOOLS.length,
+          toolNames: TOOLS.map((t: { name: string }) => t.name),
+          sourceFile: __filename,
+          nodeVersion: process.version,
+        };
+        try {
+          fs.writeFileSync(debugPath, JSON.stringify(debugInfo, null, 2));
+        } catch (e) {
+          // ignore
+        }
+
         return {
           jsonrpc: '2.0',
           id: req.id,
@@ -484,7 +710,10 @@ export class McpServer {
 
       try {
         const request = JSON.parse(body) as JsonRpcRequest;
-        this.outputChannel.appendLine(`Request: ${request.method}`);
+        if (request.method === 'tools/call') {
+          const params = request.params as { name: string };
+          this.outputChannel.appendLine(`Tool: ${params?.name}`);
+        }
 
         const response = await handleRequest(request);
         res.writeHead(200, { 'Content-Type': 'application/json' });
