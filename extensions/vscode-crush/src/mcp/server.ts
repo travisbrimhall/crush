@@ -5,7 +5,7 @@ import * as path from 'path';
 
 const TOOL_TIMEOUT_MS = 5000;
 const HIGHLIGHT_DURATION_MS = 3000;
-const ANNOTATION_DURATION_MS = 10000;
+const ANNOTATION_DEFAULT_DURATION = 0; // 0 = permanent until next annotate call
 
 // Track active annotations for cleanup
 let activeAnnotations: vscode.TextEditorDecorationType[] = [];
@@ -121,13 +121,58 @@ function createHighlightDecoration(style?: 'green' | 'red' | 'default') {
   });
 }
 
-async function highlightRangeImpl(params: { path: string; version: number; start: number; end: number; style?: 'green' | 'red' }) {
+interface HighlightParams {
+  path: string;
+  version: number;
+  // Option 1: byte offsets
+  start?: number;
+  end?: number;
+  // Option 2: line numbers (1-based)
+  startLine?: number;
+  endLine?: number;
+  // Option 3: text search
+  find?: string;
+  style?: 'green' | 'red';
+}
+
+async function highlightRangeImpl(params: HighlightParams) {
   validateWorkspacePath(params.path);
   const uri = resolveWorkspaceUri(params.path);
   const doc = await vscode.workspace.openTextDocument(uri);
 
   validateVersion(doc, params.version);
-  validateRange(doc, params.start, params.end);
+
+  let range: vscode.Range;
+
+  if (params.find !== undefined) {
+    // Option 3: Find text and highlight it
+    const text = doc.getText();
+    const idx = text.indexOf(params.find);
+    if (idx === -1) {
+      throw new McpError(404, `Text not found: "${params.find.substring(0, 50)}..."`);
+    }
+    const startPos = doc.positionAt(idx);
+    const endPos = doc.positionAt(idx + params.find.length);
+    range = new vscode.Range(startPos, endPos);
+  } else if (params.startLine !== undefined) {
+    // Option 2: Line numbers (1-based)
+    const startLine = params.startLine - 1; // Convert to 0-based
+    const endLine = (params.endLine ?? params.startLine) - 1;
+    if (startLine < 0 || endLine >= doc.lineCount) {
+      throw new McpError(400, `Line out of range (file has ${doc.lineCount} lines)`);
+    }
+    const startPos = new vscode.Position(startLine, 0);
+    const endPos = doc.lineAt(endLine).range.end;
+    range = new vscode.Range(startPos, endPos);
+  } else if (params.start !== undefined && params.end !== undefined) {
+    // Option 1: Byte offsets
+    validateRange(doc, params.start, params.end);
+    const startPos = doc.positionAt(params.start);
+    const endPos = doc.positionAt(params.end);
+    range = new vscode.Range(startPos, endPos);
+  } else {
+    throw new McpError(400, 'Must provide (start, end), (startLine, endLine), or (find)');
+  }
 
   // Check if file is already visible to avoid stealing focus
   let editor = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
@@ -136,21 +181,17 @@ async function highlightRangeImpl(params: { path: string; version: number; start
     editor = await vscode.window.showTextDocument(doc, { preview: true });
   }
 
-  const startPos = doc.positionAt(params.start);
-  const endPos = doc.positionAt(params.end);
-  const range = new vscode.Range(startPos, endPos);
-
   const decoration = createHighlightDecoration(params.style);
   editor.setDecorations(decoration, [{ range }]);
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 
-  const startLine = startPos.line + 1;
-  const endLine = endPos.line + 1;
+  const startLine = range.start.line + 1;
+  const endLine = range.end.line + 1;
   const lineRange = startLine === endLine ? `line ${startLine}` : `lines ${startLine}-${endLine}`;
   return `Highlighted ${lineRange} in ${params.path}`;
 }
 
-async function highlightRange(params: { path: string; version: number; start: number; end: number; style?: 'green' | 'red' }) {
+async function highlightRange(params: HighlightParams) {
   return withTimeout(highlightRangeImpl(params), 'highlight_range');
 }
 
@@ -247,7 +288,12 @@ async function getDefinitions(params: { path: string; version: number; position:
 
 // Annotate: add temporary inline notes
 interface Annotation {
-  offset: number;
+  // Option 1: byte offset
+  offset?: number;
+  // Option 2: line number (1-based)
+  line?: number;
+  // Option 3: text search
+  find?: string;
   text: string;
   style?: 'info' | 'warning' | 'error';
 }
@@ -274,23 +320,50 @@ async function annotateImpl(params: { path: string; version: number; annotations
     error: { bg: 'rgba(239, 68, 68, 0.8)', fg: '#ffffff' },
   };
 
+  const fullText = doc.getText();
+  let firstPos: vscode.Position | undefined;
+
   for (const ann of params.annotations) {
-    if (ann.offset < 0 || ann.offset > doc.getText().length) {
+    let pos: vscode.Position;
+
+    if (ann.find !== undefined) {
+      // Option 3: Find text - position at end of the line containing the match
+      const idx = fullText.indexOf(ann.find);
+      if (idx === -1) continue;
+      const foundPos = doc.positionAt(idx);
+      pos = new vscode.Position(foundPos.line, doc.lineAt(foundPos.line).text.length);
+    } else if (ann.line !== undefined) {
+      // Option 2: Line number (1-based) - position at end of line
+      const lineIdx = ann.line - 1;
+      if (lineIdx < 0 || lineIdx >= doc.lineCount) continue;
+      pos = new vscode.Position(lineIdx, doc.lineAt(lineIdx).text.length);
+    } else if (ann.offset !== undefined) {
+      // Option 1: Byte offset - position at end of line containing offset
+      if (ann.offset < 0 || ann.offset > fullText.length) continue;
+      const offsetPos = doc.positionAt(ann.offset);
+      pos = new vscode.Position(offsetPos.line, doc.lineAt(offsetPos.line).text.length);
+    } else {
       continue;
     }
 
-    const pos = doc.positionAt(ann.offset);
+    if (!firstPos) {
+      firstPos = pos;
+    }
+
     const range = new vscode.Range(pos, pos);
     const colors = styleColors[ann.style || 'info'];
 
+    // Use 'before' with absolute positioning to appear right after line content
+    // This ensures our annotation appears before GitLens blame
     const decoration = vscode.window.createTextEditorDecorationType({
-      after: {
-        contentText: ` ← ${ann.text}`,
+      before: {
+        contentText: `  ← ${ann.text}`,
         backgroundColor: colors.bg,
         color: colors.fg,
-        margin: '0 0 0 1em',
         fontStyle: 'italic',
+        textDecoration: ';position:relative;',
       },
+      textDecoration: 'none;position:relative;',
     });
 
     editor.setDecorations(decoration, [{ range }]);
@@ -298,17 +371,18 @@ async function annotateImpl(params: { path: string; version: number; annotations
   }
 
   // Reveal first annotation
-  if (params.annotations.length > 0) {
-    const firstPos = doc.positionAt(params.annotations[0].offset);
+  if (firstPos) {
     editor.revealRange(new vscode.Range(firstPos, firstPos), vscode.TextEditorRevealType.InCenter);
   }
 
-  // Auto-clear after duration
-  const duration = params.duration ?? ANNOTATION_DURATION_MS / 1000;
-  setTimeout(() => {
-    activeAnnotations.forEach((d) => d.dispose());
-    activeAnnotations = [];
-  }, duration * 1000);
+  // Auto-clear after duration (0 = permanent)
+  const duration = params.duration ?? ANNOTATION_DEFAULT_DURATION;
+  if (duration > 0) {
+    setTimeout(() => {
+      activeAnnotations.forEach((d) => d.dispose());
+      activeAnnotations = [];
+    }, duration * 1000);
+  }
 
   return `Added ${params.annotations.length} annotation(s) to ${params.path}`;
 }
@@ -415,12 +489,15 @@ const TOOLS = [
       'Highlights a code range in VS Code with a temporary visual decoration. Use this to show the user exactly where to look instead of describing line numbers. The highlight auto-clears after 3 seconds.',
     inputSchema: {
       type: 'object',
-      required: ['path', 'version', 'start', 'end'],
+      required: ['path', 'version'],
       properties: {
         path: { type: 'string', description: 'Workspace-relative file path' },
         version: { type: 'integer', minimum: 0, description: 'Document version from get_document_metadata' },
         start: { type: 'integer', minimum: 0, description: 'Start offset (UTF-16 code units)' },
         end: { type: 'integer', minimum: 0, description: 'End offset (UTF-16 code units)' },
+        startLine: { type: 'integer', minimum: 1, description: 'Start line number (1-based)' },
+        endLine: { type: 'integer', minimum: 1, description: 'End line number (1-based, defaults to startLine)' },
+        find: { type: 'string', description: 'Text to find and highlight' },
         style: { type: 'string', enum: ['green', 'red'], description: 'Highlight color (default: yellow)' },
       },
     },
@@ -482,9 +559,11 @@ const TOOLS = [
           type: 'array',
           items: {
             type: 'object',
-            required: ['offset', 'text'],
+            required: ['text'],
             properties: {
               offset: { type: 'integer', minimum: 0, description: 'Position offset in file' },
+              line: { type: 'integer', minimum: 1, description: 'Line number (1-based)' },
+              find: { type: 'string', description: 'Text to find and annotate' },
               text: { type: 'string', description: 'Annotation text to display' },
               style: { type: 'string', enum: ['info', 'warning', 'error'], description: 'Annotation style (default: info)' },
             },
@@ -531,7 +610,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     case 'open_file':
       return openFile(args as { path: string; preview?: boolean });
     case 'highlight_range':
-      return highlightRange(args as { path: string; version: number; start: number; end: number; style?: 'green' | 'red' });
+      return highlightRange(args as unknown as HighlightParams);
     case 'read_file':
       return readFile(args as { path: string; version?: number; range?: { start: number; end: number }; maxBytes?: number });
     case 'get_diagnostics':
