@@ -137,12 +137,28 @@ func (g *GrepToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	return joinToolParts(header, body)
 }
 
-// toolOutputGrepContent renders grep output with match count and file paths only.
+// toolOutputGrepContent renders grep output with match count and file paths with
+// line numbers. Each match gets its own line in file:line format for terminal
+// clickability.
 func toolOutputGrepContent(sty *styles.Styles, content, pattern string, literalText bool, width int, expanded bool) string {
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
 
 	var out []string
+	var currentFile string
+
+	flushFile := func(lineNum string) {
+		if currentFile == "" {
+			return
+		}
+		// Remove trailing colon from file path and add line number.
+		filePath := strings.TrimSuffix(currentFile, ":")
+		line := " " + filePath + ":" + lineNum
+		if lipgloss.Width(line) > width {
+			line = ansi.Truncate(line, width, "…")
+		}
+		out = append(out, sty.Tool.GrepFilePath.Width(width).Render(line))
+	}
 
 	for _, ln := range lines {
 		trimmed := strings.TrimSpace(ln)
@@ -163,17 +179,25 @@ func toolOutputGrepContent(sty *styles.Styles, content, pattern string, literalT
 			continue
 		}
 
-		// File path lines (end with ":") - show these.
+		// File path lines (end with ":") - remember for subsequent match lines.
 		if strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, "Line ") {
-			line := " " + trimmed
-			if lipgloss.Width(line) > width {
-				line = ansi.Truncate(line, width, "…")
-			}
-			out = append(out, sty.Tool.GrepFilePath.Width(width).Render(line))
+			currentFile = trimmed
 			continue
 		}
 
-		// Skip individual match lines (Line X, Char Y: content).
+		// Match lines (Line X, Char Y: content) - output file:line immediately.
+		if strings.HasPrefix(trimmed, "Line ") {
+			// Format: "Line 32, Char 24: content" or "Line 32: content"
+			var lineNum string
+			if idx := strings.Index(trimmed, ","); idx != -1 {
+				lineNum = trimmed[5:idx]
+			} else if idx := strings.Index(trimmed, ":"); idx != -1 {
+				lineNum = trimmed[5:idx]
+			}
+			if lineNum != "" {
+				flushFile(lineNum)
+			}
+		}
 	}
 
 	return strings.Join(out, "\n")

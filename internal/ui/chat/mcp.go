@@ -40,6 +40,12 @@ func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *T
 	mcpName := prettyName(toolNameParts[1])
 	toolName := prettyName(toolNameParts[2])
 
+	// Add icons for known MCP servers
+	mcpIcon := mcpIconFor(toolNameParts[1])
+	if mcpIcon != "" {
+		mcpName = mcpIcon + " " + mcpName
+	}
+
 	mcpName = sty.Tool.MCPName.Render(mcpName)
 	toolName = sty.Tool.MCPToolName.Render(toolName)
 
@@ -96,6 +102,16 @@ func prettyName(name string) string {
 	name = strings.ReplaceAll(name, "_", " ")
 	name = strings.ReplaceAll(name, "-", " ")
 	return stringext.Capitalize(name)
+}
+
+// mcpIconFor returns a Nerd Font icon for known MCP servers.
+func mcpIconFor(mcpName string) string {
+	switch mcpName {
+	case "vscode":
+		return "󰨞" // nf-md-microsoft_visual_studio_code
+	default:
+		return ""
+	}
 }
 
 // looksLikeMarkdown checks if content appears to be markdown by looking for

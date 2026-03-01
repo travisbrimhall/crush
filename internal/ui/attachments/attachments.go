@@ -86,6 +86,8 @@ func NewRenderer(normalStyle, deletingStyle lipgloss.Style, icons IconStyles) *R
 // IconStyles holds styles for different file type icons.
 type IconStyles struct {
 	Image, Text, Code, Config, Archive, Audio, Video, PDF, Data, File lipgloss.Style
+	// Source-specific icons for external integrations.
+	VSCode, Chrome, Docker lipgloss.Style
 }
 
 type Renderer struct {
@@ -101,19 +103,19 @@ func (r *Renderer) Render(attachments []message.Attachment, deleting bool, width
 	fits := int(math.Floor(float64(width)/float64(maxItemWidth))) - 1
 
 	for i, att := range attachments {
-		filename := filepath.Base(att.FileName)
+		label := r.formatLabel(att)
 
 		if deleting {
 			chips = append(
 				chips,
 				r.deletingStyle.Render(fmt.Sprintf("%d", i)),
-				r.normalStyle.Render(filename),
+				r.normalStyle.Render(label),
 			)
 		} else {
 			chips = append(
 				chips,
 				r.icon(att).String(),
-				r.normalStyle.Render(filename),
+				r.normalStyle.Render(label),
 			)
 		}
 
@@ -126,7 +128,32 @@ func (r *Renderer) Render(attachments []message.Attachment, deleting bool, width
 	return lipgloss.JoinHorizontal(lipgloss.Left, chips...)
 }
 
+// formatLabel returns the display label for an attachment.
+// For selections with line ranges, shows "filename:start-end".
+// For single-line selections, shows "filename:line".
+// Otherwise, shows just the filename.
+func (r *Renderer) formatLabel(att message.Attachment) string {
+	filename := filepath.Base(att.FileName)
+	if att.StartLine > 0 && att.EndLine > 0 {
+		if att.StartLine == att.EndLine {
+			return fmt.Sprintf("%s:%d", filename, att.StartLine)
+		}
+		return fmt.Sprintf("%s:%d-%d", filename, att.StartLine, att.EndLine)
+	}
+	return filename
+}
+
 func (r *Renderer) icon(a message.Attachment) lipgloss.Style {
+	// Source-specific icons take priority.
+	switch a.Source {
+	case message.AttachmentSourceVSCode:
+		return r.icons.VSCode
+	case message.AttachmentSourceChrome:
+		return r.icons.Chrome
+	case message.AttachmentSourceDocker:
+		return r.icons.Docker
+	}
+
 	ext := strings.ToLower(filepath.Ext(a.FileName))
 
 	// Images.

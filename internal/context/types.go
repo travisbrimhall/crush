@@ -48,6 +48,7 @@ const (
 	EventTestFailure      EventType = "test_failure_fix_request"
 	EventConsoleError     EventType = "console_error_fix_request"
 	EventContainerFailure EventType = "container_failure_fix_request"
+	EventSelection        EventType = "selection_context"
 )
 
 // Range represents a text range in a file.
@@ -220,4 +221,29 @@ func HashPayload(eventType EventType, filePath string, payload json.RawMessage) 
 	data, _ := json.Marshal(hashInput)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// SelectionPayload represents the parsed selection_context payload.
+type SelectionPayload struct {
+	File struct {
+		Path       string `json:"path"`
+		LanguageID string `json:"languageId"`
+	} `json:"file"`
+	Selection struct {
+		Range Range  `json:"range"`
+		Text  string `json:"text"`
+	} `json:"selection"`
+}
+
+// ParseSelectionPayload extracts selection data from a selection_context entry.
+// Returns nil if the entry is not a selection context or parsing fails.
+func (e *Entry) ParseSelectionPayload() *SelectionPayload {
+	if e.EventType != EventSelection {
+		return nil
+	}
+	var p SelectionPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return nil
+	}
+	return &p
 }

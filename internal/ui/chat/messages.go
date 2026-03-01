@@ -274,6 +274,9 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 				PDF:     sty.Attachments.PDF,
 				Data:    sty.Attachments.Data,
 				File:    sty.Attachments.File,
+				VSCode:  sty.Attachments.VSCode,
+				Chrome:  sty.Attachments.Chrome,
+				Docker:  sty.Attachments.Docker,
 			},
 		)
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}

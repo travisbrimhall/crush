@@ -89,6 +89,7 @@ func (m *UserMessageItem) renderAttachments(width int) string {
 		attachments = append(attachments, message.Attachment{
 			FileName: at.Path,
 			MimeType: at.MIMEType,
+			Source:   message.AttachmentSource(at.Source),
 		})
 	}
 	return m.attachments.Render(attachments, false, width)

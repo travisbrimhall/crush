@@ -229,9 +229,6 @@ type UI struct {
 	// Pending template for new session
 	pendingTemplateID string
 
-	// Pending external contexts from VS Code, Chrome, etc.
-	pendingContexts []*ctxserver.Entry
-
 	// mouse highlighting related state
 	lastClickTime time.Time
 
@@ -285,6 +282,9 @@ func New(com *common.Common) *UI {
 				PDF:     com.Styles.Attachments.PDF,
 				Data:    com.Styles.Attachments.Data,
 				File:    com.Styles.Attachments.File,
+				VSCode:  com.Styles.Attachments.VSCode,
+				Chrome:  com.Styles.Attachments.Chrome,
+				Docker:  com.Styles.Attachments.Docker,
 			},
 		),
 		attachments.Keymap{
@@ -1615,6 +1615,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 				attachments := m.attachments.List()
 				m.attachments.Reset()
+
 				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
 					return nil
 				}
@@ -1956,8 +1957,8 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		if m.textarea.Focused() {
 			cur := m.textarea.Cursor()
 			cur.X++ // Adjust for app margins
-			// Offset for content above textarea (pending contexts, attachments).
-			offset := m.layout.editor.Min.Y + m.pendingContextsHeight()
+			// Offset for content above textarea (attachments row).
+			offset := m.layout.editor.Min.Y
 			if len(m.attachments.List()) > 0 {
 				offset++ // Attachments row
 			}
@@ -2239,7 +2240,10 @@ func (m *UI) updateSize() {
 	// TODO: Abstract the textarea and attachments into a single editor
 	// component so we don't have to manually account for the attachments
 	// height here.
-	editorOverhead := 2 + m.pendingContextsHeight() // margins + pending contexts
+	editorOverhead := 2 // margins
+	if len(m.attachments.List()) > 0 {
+		editorOverhead++ // attachments row
+	}
 	m.textarea.SetHeight(m.layout.editor.Dy() - editorOverhead)
 	m.renderPills()
 
@@ -2697,12 +2701,7 @@ func (m *UI) randomizePlaceholders() {
 func (m *UI) renderEditorView(width int) string {
 	var parts []string
 
-	// Render pending external contexts.
-	if len(m.pendingContexts) > 0 {
-		parts = append(parts, m.renderPendingContexts(width))
-	}
-
-	// Render attachments.
+	// Render attachments (includes VS Code selections converted to attachments).
 	if len(m.attachments.List()) > 0 {
 		parts = append(parts, m.attachments.Render(width))
 	}
@@ -2710,87 +2709,6 @@ func (m *UI) renderEditorView(width int) string {
 	parts = append(parts, m.textarea.View(), "") // margin at bottom
 
 	return strings.Join(parts, "\n")
-}
-
-// renderPendingContexts renders the pending external contexts above the editor.
-func (m *UI) renderPendingContexts(width int) string {
-	s := m.com.Styles
-	var blocks []string
-
-	for _, ctx := range m.pendingContexts {
-		// Format age.
-		age := formatContextAge(ctx.ReceivedAt)
-
-		// Build header.
-		var title string
-		switch ctx.Source {
-		case ctxserver.SourceVSCode:
-			title = "VS Code"
-		case ctxserver.SourceChrome:
-			title = "Chrome"
-		case ctxserver.SourceDocker:
-			title = "Docker"
-		default:
-			title = string(ctx.Source)
-		}
-
-		if ctx.Count > 1 {
-			title = fmt.Sprintf("%s (×%d, %s)", title, ctx.Count, age)
-		} else {
-			title = fmt.Sprintf("%s (%s)", title, age)
-		}
-
-		// Build body.
-		var body string
-		if ctx.FilePath != "" {
-			body = s.Muted.Render("File: ") + s.Subtle.Render(ctx.FilePath)
-		}
-
-		headerLine := fmt.Sprintf("┌─ %s ", title) + strings.Repeat("─", max(0, width-lipgloss.Width(title)-5))
-		header := s.Muted.Render(headerLine)
-		footer := s.Muted.Render("└" + strings.Repeat("─", max(0, width-2)))
-
-		if body != "" {
-			blocks = append(blocks, header+"\n│ "+body+"\n"+footer)
-		} else {
-			blocks = append(blocks, header+"\n"+footer)
-		}
-	}
-
-	return strings.Join(blocks, "\n")
-}
-
-// pendingContextsHeight returns the number of lines consumed by pending contexts.
-func (m *UI) pendingContextsHeight() int {
-	if len(m.pendingContexts) == 0 {
-		return 0
-	}
-	height := 0
-	for _, ctx := range m.pendingContexts {
-		if ctx.FilePath != "" {
-			height += 3 // header + body + footer
-		} else {
-			height += 2 // header + footer
-		}
-	}
-	// Account for newlines between blocks and trailing newline.
-	height += len(m.pendingContexts)
-	return height
-}
-
-// formatContextAge returns a human-readable age string.
-func formatContextAge(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	}
 }
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
@@ -3110,13 +3028,61 @@ func (m *UI) handlePermissionNotification(notification permission.PermissionNoti
 }
 
 // handleExternalContext handles incoming context from VS Code, Chrome, etc.
+// Converts the context to an attachment immediately.
 func (m *UI) handleExternalContext(entry *ctxserver.Entry) {
-	// Add to pending contexts (newest first).
-	m.pendingContexts = append([]*ctxserver.Entry{entry}, m.pendingContexts...)
+	if entry.EventType == ctxserver.EventSelection {
+		if att := m.selectionContextToAttachment(entry); att != nil {
+			m.attachments.Update(*att)
+		}
+	}
+	// TODO: Handle other context types (diagnostics, test failures, etc.)
+}
 
-	// Keep max 20 pending.
-	if len(m.pendingContexts) > 20 {
-		m.pendingContexts = m.pendingContexts[:20]
+// selectionContextToAttachment converts a selection context to a text attachment.
+func (m *UI) selectionContextToAttachment(ctx *ctxserver.Entry) *message.Attachment {
+	sel := ctx.ParseSelectionPayload()
+	if sel == nil {
+		return nil
+	}
+
+	// Convert to 1-indexed lines.
+	startLine := sel.Selection.Range.Start.Line + 1
+	endLine := sel.Selection.Range.End.Line + 1
+
+	// Format as markdown with code fence.
+	var content strings.Builder
+	fmt.Fprintf(&content, "%s (lines %d-%d):\n", sel.File.Path, startLine, endLine)
+	content.WriteString("```")
+	content.WriteString(sel.File.LanguageID)
+	content.WriteString("\n")
+	content.WriteString(sel.Selection.Text)
+	if !strings.HasSuffix(sel.Selection.Text, "\n") {
+		content.WriteString("\n")
+	}
+	content.WriteString("```")
+
+	return &message.Attachment{
+		FilePath:  sel.File.Path,
+		FileName:  filepath.Base(sel.File.Path),
+		MimeType:  "text/plain",
+		Content:   []byte(content.String()),
+		Source:    contextSourceToAttachmentSource(ctx.Source),
+		StartLine: startLine,
+		EndLine:   endLine,
+	}
+}
+
+// contextSourceToAttachmentSource converts a context server source to an attachment source.
+func contextSourceToAttachmentSource(src ctxserver.Source) message.AttachmentSource {
+	switch src {
+	case ctxserver.SourceVSCode:
+		return message.AttachmentSourceVSCode
+	case ctxserver.SourceChrome:
+		return message.AttachmentSourceChrome
+	case ctxserver.SourceDocker:
+		return message.AttachmentSourceDocker
+	default:
+		return message.AttachmentSourceLocal
 	}
 }
 
