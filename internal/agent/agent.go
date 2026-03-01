@@ -436,7 +436,7 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
-		attachmentParts = append(attachmentParts, message.BinaryContent{Path: attachment.FilePath, MIMEType: attachment.MimeType, Data: attachment.Content})
+		attachmentParts = append(attachmentParts, message.BinaryContent{Path: attachment.FilePath, MIMEType: attachment.MimeType, Data: attachment.Content, Source: string(attachment.Source)})
 	}
 	parts = append(parts, attachmentParts...)
 	msg, err := a.messages.Create(ctx, call.SessionID, message.CreateMessageParams{
@@ -509,6 +509,11 @@ func (a *sessionAgent) buildRunState(ctx context.Context, call SessionAgentCall)
 	}
 	if s := instructions.String(); s != "" {
 		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
+	}
+
+	// Append VS Code integration instructions if connected.
+	if vsCodeInstructions := mcp.VSCodeInstructions(); vsCodeInstructions != "" {
+		systemPrompt += "\n\n" + vsCodeInstructions
 	}
 
 	// Add Anthropic caching to the last tool.

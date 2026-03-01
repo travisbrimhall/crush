@@ -165,6 +165,10 @@ func Close(ctx context.Context) error {
 // Initialize initializes MCP clients based on the provided configuration.
 func Initialize(ctx context.Context, permissions permission.Service, cfg *config.Config) {
 	slog.Info("Initializing MCP clients")
+
+	// Try to discover and connect to VS Code MCP.
+	InitializeVSCodeMCPOnStartup(ctx, permissions, cfg)
+
 	var wg sync.WaitGroup
 	// Initialize states for all configured MCPs
 	for name, m := range cfg.MCP {
