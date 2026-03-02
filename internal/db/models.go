@@ -50,6 +50,9 @@ type Session struct {
 	SummaryMessageID sql.NullString `json:"summary_message_id"`
 	Todos            sql.NullString `json:"todos"`
 	TemplateID       sql.NullString `json:"template_id"`
+	InputTokens      int64          `json:"input_tokens"`
+	CacheReadTokens  int64          `json:"cache_read_tokens"`
+	CacheWriteTokens int64          `json:"cache_write_tokens"`
 }
 
 type SessionSummary struct {

@@ -105,6 +105,51 @@ body {
   font-size: 0.875rem;
   color: var(--hazy);
   font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.cache-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.cache-toggle input[type="checkbox"] {
+  appearance: none;
+  width: 36px;
+  height: 20px;
+  background: var(--iron);
+  border-radius: 10px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.cache-toggle input[type="checkbox"]:checked {
+  background: var(--charple);
+}
+
+.cache-toggle input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--butter);
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+}
+
+.cache-toggle input[type="checkbox"]:checked::before {
+  transform: translateX(16px);
 }
 
 .stats-grid {
@@ -206,6 +251,13 @@ body {
   color: var(--text);
 }
 
+.heatmap-range {
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: var(--squid);
+  margin-left: 0.5rem;
+}
+
 .chart-container {
   position: relative;
   height: 300px;
@@ -213,6 +265,10 @@ body {
 
 .chart-container.tall {
   height: 400px;
+}
+
+.chart-container.heatmap {
+  height: 600px;
 }
 
 table {

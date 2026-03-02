@@ -668,6 +668,60 @@ config:
 }
 ```
 
+## Prometheus Metrics
+
+Crush can expose Prometheus metrics for monitoring token usage, LLM latency,
+tool performance, and agent behavior.
+
+### Enabling Metrics
+
+Add `metrics_port` to your `crush.json`:
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "metrics_port": 9090
+}
+```
+
+This exposes metrics at `http://localhost:9090/metrics`.
+
+### Available Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `crush_llm_request_duration_seconds` | histogram | LLM request latency by provider/model |
+| `crush_llm_tokens_total` | counter | Token usage (prompt/completion) |
+| `crush_llm_time_to_first_token_seconds` | histogram | Time to first token |
+| `crush_tool_duration_seconds` | histogram | Tool execution latency |
+| `crush_tool_calls_total` | counter | Tool invocations by name/status |
+| `crush_tool_output_bytes` | histogram | Tool output size |
+| `crush_agent_runs_total` | counter | Agent runs by status |
+| `crush_agent_steps_total` | counter | Total agent steps executed |
+
+### Grafana Dashboard
+
+A pre-built dashboard is available in `monitoring/grafana-dashboard.json`. To use it:
+
+```bash
+# Start Prometheus (pointing to Crush metrics)
+docker run -d --name crush-prometheus \
+  -p 9091:9090 \
+  -v $(pwd)/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml \
+  --add-host=host.docker.internal:host-gateway \
+  prom/prometheus
+
+# Start Grafana
+docker run -d --name crush-grafana \
+  -p 3000:3000 \
+  --add-host=host.docker.internal:host-gateway \
+  grafana/grafana
+```
+
+Then in Grafana (http://localhost:3000, admin/admin):
+1. Add Prometheus data source: `http://host.docker.internal:9091`
+2. Import `monitoring/grafana-dashboard.json`
+
 ## Provider Auto-Updates
 
 By default, Crush automatically checks for the latest and greatest list of

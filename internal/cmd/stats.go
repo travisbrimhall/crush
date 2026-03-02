@@ -50,22 +50,26 @@ var dayNames = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", 
 
 // Stats holds all the statistics data.
 type Stats struct {
-	GeneratedAt       time.Time          `json:"generated_at"`
-	Total             TotalStats         `json:"total"`
-	UsageByDay        []DailyUsage       `json:"usage_by_day"`
-	UsageByModel      []ModelUsage       `json:"usage_by_model"`
-	UsageByHour       []HourlyUsage      `json:"usage_by_hour"`
-	UsageByDayOfWeek  []DayOfWeekUsage   `json:"usage_by_day_of_week"`
-	RecentActivity    []DailyActivity    `json:"recent_activity"`
-	AvgResponseTimeMs float64            `json:"avg_response_time_ms"`
-	ToolUsage         []ToolUsage        `json:"tool_usage"`
-	HourDayHeatmap    []HourDayHeatmapPt `json:"hour_day_heatmap"`
+	GeneratedAt         time.Time               `json:"generated_at"`
+	Total               TotalStats              `json:"total"`
+	UsageByDay          []DailyUsage            `json:"usage_by_day"`
+	UsageByModel        []ModelUsage            `json:"usage_by_model"`
+	UsageByHour         []HourlyUsage           `json:"usage_by_hour"`
+	UsageByDayOfWeek    []DayOfWeekUsage        `json:"usage_by_day_of_week"`
+	RecentActivity      []DailyActivity         `json:"recent_activity"`
+	AvgResponseTimeMs   float64                 `json:"avg_response_time_ms"`
+	ToolUsage           []ToolUsage             `json:"tool_usage"`
+	HourDayTokenHeatmap []HourDayTokenHeatmapPt `json:"hour_day_token_heatmap"`
+	HeatmapDateRange    HeatmapDateRange        `json:"heatmap_date_range"`
 }
 
 type TotalStats struct {
 	TotalSessions         int64   `json:"total_sessions"`
 	TotalPromptTokens     int64   `json:"total_prompt_tokens"`
 	TotalCompletionTokens int64   `json:"total_completion_tokens"`
+	TotalInputTokens      int64   `json:"total_input_tokens"`
+	TotalCacheReadTokens  int64   `json:"total_cache_read_tokens"`
+	TotalCacheWriteTokens int64   `json:"total_cache_write_tokens"`
 	TotalTokens           int64   `json:"total_tokens"`
 	TotalCost             float64 `json:"total_cost"`
 	TotalMessages         int64   `json:"total_messages"`
@@ -77,6 +81,9 @@ type DailyUsage struct {
 	Day              string  `json:"day"`
 	PromptTokens     int64   `json:"prompt_tokens"`
 	CompletionTokens int64   `json:"completion_tokens"`
+	InputTokens      int64   `json:"input_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
 	TotalTokens      int64   `json:"total_tokens"`
 	Cost             float64 `json:"cost"`
 	SessionCount     int64   `json:"session_count"`
@@ -99,6 +106,9 @@ type DayOfWeekUsage struct {
 	SessionCount     int64  `json:"session_count"`
 	PromptTokens     int64  `json:"prompt_tokens"`
 	CompletionTokens int64  `json:"completion_tokens"`
+	InputTokens      int64  `json:"input_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
 }
 
 type DailyActivity struct {
@@ -109,14 +119,22 @@ type DailyActivity struct {
 }
 
 type ToolUsage struct {
-	ToolName  string `json:"tool_name"`
-	CallCount int64  `json:"call_count"`
+	ToolName        string `json:"tool_name"`
+	CallCount       int64  `json:"call_count"`
+	EstimatedTokens int64  `json:"estimated_tokens"`
 }
 
-type HourDayHeatmapPt struct {
-	DayOfWeek    int   `json:"day_of_week"`
-	Hour         int   `json:"hour"`
-	SessionCount int64 `json:"session_count"`
+type HourDayTokenHeatmapPt struct {
+	DayOfWeek            int   `json:"day_of_week"`
+	Hour                 int   `json:"hour"`
+	TotalTokens          int64 `json:"total_tokens"`
+	TotalTokensExclCache int64 `json:"total_tokens_excl_cache"`
+}
+
+type HeatmapDateRange struct {
+	FirstDay  string `json:"first_day"`
+	LastDay   string `json:"last_day"`
+	TotalDays int64  `json:"total_days"`
 }
 
 func runStats(cmd *cobra.Command, _ []string) error {
@@ -188,6 +206,9 @@ func gatherStats(ctx context.Context, conn *sql.DB) (*Stats, error) {
 		TotalSessions:         total.TotalSessions,
 		TotalPromptTokens:     toInt64(total.TotalPromptTokens),
 		TotalCompletionTokens: toInt64(total.TotalCompletionTokens),
+		TotalInputTokens:      toInt64(total.TotalInputTokens),
+		TotalCacheReadTokens:  toInt64(total.TotalCacheReadTokens),
+		TotalCacheWriteTokens: toInt64(total.TotalCacheWriteTokens),
 		TotalTokens:           toInt64(total.TotalPromptTokens) + toInt64(total.TotalCompletionTokens),
 		TotalCost:             toFloat64(total.TotalCost),
 		TotalMessages:         toInt64(total.TotalMessages),
@@ -203,10 +224,16 @@ func gatherStats(ctx context.Context, conn *sql.DB) (*Stats, error) {
 	for _, d := range dailyUsage {
 		prompt := nullFloat64ToInt64(d.PromptTokens)
 		completion := nullFloat64ToInt64(d.CompletionTokens)
+		inputTokens := nullFloat64ToInt64(d.InputTokens)
+		cacheRead := nullFloat64ToInt64(d.CacheReadTokens)
+		cacheWrite := nullFloat64ToInt64(d.CacheWriteTokens)
 		stats.UsageByDay = append(stats.UsageByDay, DailyUsage{
 			Day:              fmt.Sprintf("%v", d.Day),
 			PromptTokens:     prompt,
 			CompletionTokens: completion,
+			InputTokens:      inputTokens,
+			CacheReadTokens:  cacheRead,
+			CacheWriteTokens: cacheWrite,
 			TotalTokens:      prompt + completion,
 			Cost:             d.Cost.Float64,
 			SessionCount:     d.SessionCount,
@@ -250,6 +277,9 @@ func gatherStats(ctx context.Context, conn *sql.DB) (*Stats, error) {
 			SessionCount:     d.SessionCount,
 			PromptTokens:     nullFloat64ToInt64(d.PromptTokens),
 			CompletionTokens: nullFloat64ToInt64(d.CompletionTokens),
+			InputTokens:      nullFloat64ToInt64(d.InputTokens),
+			CacheReadTokens:  nullFloat64ToInt64(d.CacheReadTokens),
+			CacheWriteTokens: nullFloat64ToInt64(d.CacheWriteTokens),
 		})
 	}
 
@@ -274,31 +304,44 @@ func gatherStats(ctx context.Context, conn *sql.DB) (*Stats, error) {
 	}
 	stats.AvgResponseTimeMs = toFloat64(avgResp) * 1000
 
-	// Tool usage.
-	toolUsage, err := queries.GetToolUsage(ctx)
+	// Tool usage with token estimates.
+	toolUsage, err := queries.GetToolUsageWithTokens(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get tool usage: %w", err)
 	}
 	for _, t := range toolUsage {
 		if name, ok := t.ToolName.(string); ok && name != "" {
 			stats.ToolUsage = append(stats.ToolUsage, ToolUsage{
-				ToolName:  name,
-				CallCount: t.CallCount,
+				ToolName:        name,
+				CallCount:       t.CallCount,
+				EstimatedTokens: t.EstimatedTokens,
 			})
 		}
 	}
 
-	// Hour/day heatmap.
-	heatmap, err := queries.GetHourDayHeatmap(ctx)
+	// Hour/day token heatmap.
+	tokenHeatmap, err := queries.GetHourDayTokenHeatmap(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("get hour day heatmap: %w", err)
+		return nil, fmt.Errorf("get hour day token heatmap: %w", err)
 	}
-	for _, h := range heatmap {
-		stats.HourDayHeatmap = append(stats.HourDayHeatmap, HourDayHeatmapPt{
-			DayOfWeek:    int(h.DayOfWeek),
-			Hour:         int(h.Hour),
-			SessionCount: h.SessionCount,
+	for _, h := range tokenHeatmap {
+		stats.HourDayTokenHeatmap = append(stats.HourDayTokenHeatmap, HourDayTokenHeatmapPt{
+			DayOfWeek:            int(h.DayOfWeek),
+			Hour:                 int(h.Hour),
+			TotalTokens:          toInt64(h.TotalTokens),
+			TotalTokensExclCache: toInt64(h.TotalTokensExclCache),
 		})
+	}
+
+	// Heatmap date range.
+	dateRange, err := queries.GetHeatmapDateRange(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get heatmap date range: %w", err)
+	}
+	stats.HeatmapDateRange = HeatmapDateRange{
+		FirstDay:  fmt.Sprintf("%v", dateRange.FirstDay),
+		LastDay:   fmt.Sprintf("%v", dateRange.LastDay),
+		TotalDays: dateRange.TotalDays,
 	}
 
 	return stats, nil

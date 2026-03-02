@@ -42,6 +42,9 @@ SET
     title = ?,
     prompt_tokens = ?,
     completion_tokens = ?,
+    input_tokens = ?,
+    cache_read_tokens = ?,
+    cache_write_tokens = ?,
     summary_message_id = ?,
     cost = ?,
     todos = ?
@@ -54,6 +57,9 @@ SET
     title = ?,
     prompt_tokens = prompt_tokens + ?,
     completion_tokens = completion_tokens + ?,
+    input_tokens = input_tokens + ?,
+    cache_read_tokens = cache_read_tokens + ?,
+    cache_write_tokens = cache_write_tokens + ?,
     cost = cost + ?
 WHERE id = ?;
 

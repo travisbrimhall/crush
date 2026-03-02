@@ -75,8 +75,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getFileReadStmt, err = db.PrepareContext(ctx, getFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileRead: %w", err)
 	}
-	if q.getHourDayHeatmapStmt, err = db.PrepareContext(ctx, getHourDayHeatmap); err != nil {
-		return nil, fmt.Errorf("error preparing query GetHourDayHeatmap: %w", err)
+	if q.getHeatmapDateRangeStmt, err = db.PrepareContext(ctx, getHeatmapDateRange); err != nil {
+		return nil, fmt.Errorf("error preparing query GetHeatmapDateRange: %w", err)
+	}
+	if q.getHourDayTokenHeatmapStmt, err = db.PrepareContext(ctx, getHourDayTokenHeatmap); err != nil {
+		return nil, fmt.Errorf("error preparing query GetHourDayTokenHeatmap: %w", err)
 	}
 	if q.getMessageStmt, err = db.PrepareContext(ctx, getMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMessage: %w", err)
@@ -104,6 +107,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getToolUsageStmt, err = db.PrepareContext(ctx, getToolUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query GetToolUsage: %w", err)
+	}
+	if q.getToolUsageWithTokensStmt, err = db.PrepareContext(ctx, getToolUsageWithTokens); err != nil {
+		return nil, fmt.Errorf("error preparing query GetToolUsageWithTokens: %w", err)
 	}
 	if q.getTotalStatsStmt, err = db.PrepareContext(ctx, getTotalStats); err != nil {
 		return nil, fmt.Errorf("error preparing query GetTotalStats: %w", err)
@@ -261,9 +267,14 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getFileReadStmt: %w", cerr)
 		}
 	}
-	if q.getHourDayHeatmapStmt != nil {
-		if cerr := q.getHourDayHeatmapStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getHourDayHeatmapStmt: %w", cerr)
+	if q.getHeatmapDateRangeStmt != nil {
+		if cerr := q.getHeatmapDateRangeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getHeatmapDateRangeStmt: %w", cerr)
+		}
+	}
+	if q.getHourDayTokenHeatmapStmt != nil {
+		if cerr := q.getHourDayTokenHeatmapStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getHourDayTokenHeatmapStmt: %w", cerr)
 		}
 	}
 	if q.getMessageStmt != nil {
@@ -309,6 +320,11 @@ func (q *Queries) Close() error {
 	if q.getToolUsageStmt != nil {
 		if cerr := q.getToolUsageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getToolUsageStmt: %w", cerr)
+		}
+	}
+	if q.getToolUsageWithTokensStmt != nil {
+		if cerr := q.getToolUsageWithTokensStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getToolUsageWithTokensStmt: %w", cerr)
 		}
 	}
 	if q.getTotalStatsStmt != nil {
@@ -477,7 +493,8 @@ type Queries struct {
 	getFileStmt                            *sql.Stmt
 	getFileByPathAndSessionStmt            *sql.Stmt
 	getFileReadStmt                        *sql.Stmt
-	getHourDayHeatmapStmt                  *sql.Stmt
+	getHeatmapDateRangeStmt                *sql.Stmt
+	getHourDayTokenHeatmapStmt             *sql.Stmt
 	getMessageStmt                         *sql.Stmt
 	getRecentActivityStmt                  *sql.Stmt
 	getSessionByIDStmt                     *sql.Stmt
@@ -487,6 +504,7 @@ type Queries struct {
 	getSlowestToolsStmt                    *sql.Stmt
 	getToolMetricsSummaryStmt              *sql.Stmt
 	getToolUsageStmt                       *sql.Stmt
+	getToolUsageWithTokensStmt             *sql.Stmt
 	getTotalStatsStmt                      *sql.Stmt
 	getUsageByDayStmt                      *sql.Stmt
 	getUsageByDayOfWeekStmt                *sql.Stmt
@@ -532,7 +550,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getFileStmt:                            q.getFileStmt,
 		getFileByPathAndSessionStmt:            q.getFileByPathAndSessionStmt,
 		getFileReadStmt:                        q.getFileReadStmt,
-		getHourDayHeatmapStmt:                  q.getHourDayHeatmapStmt,
+		getHeatmapDateRangeStmt:                q.getHeatmapDateRangeStmt,
+		getHourDayTokenHeatmapStmt:             q.getHourDayTokenHeatmapStmt,
 		getMessageStmt:                         q.getMessageStmt,
 		getRecentActivityStmt:                  q.getRecentActivityStmt,
 		getSessionByIDStmt:                     q.getSessionByIDStmt,
@@ -542,6 +561,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getSlowestToolsStmt:                    q.getSlowestToolsStmt,
 		getToolMetricsSummaryStmt:              q.getToolMetricsSummaryStmt,
 		getToolUsageStmt:                       q.getToolUsageStmt,
+		getToolUsageWithTokensStmt:             q.getToolUsageWithTokensStmt,
 		getTotalStatsStmt:                      q.getTotalStatsStmt,
 		getUsageByDayStmt:                      q.getUsageByDayStmt,
 		getUsageByDayOfWeekStmt:                q.getUsageByDayOfWeekStmt,

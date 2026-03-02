@@ -1,5 +1,8 @@
 {
   "$schema": "https://charm.land/crush.json",
+  "options": {
+    "metrics_port": 9090
+  },
   "lsp": {
     "gopls": {
       "options": {
